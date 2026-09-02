@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional
 from src.config import settings
@@ -97,13 +98,17 @@ class DiarioSummarizer:
 
         try:
             if self._use_new_sdk:
-                response = self._client.models.generate_content(
+                response = await asyncio.to_thread(
+                    self._client.models.generate_content,
                     model=self.model_name,
                     contents=prompt,
                 )
                 resumo = response.text
             else:
-                response = self._client.generate_content(prompt)
+                response = await asyncio.to_thread(
+                    self._client.generate_content,
+                    prompt
+                )
                 resumo = response.text
 
             if resumo and len(resumo.strip()) > 50:
