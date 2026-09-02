@@ -1,0 +1,22 @@
+# Ambiente Virtual
+venv/
+.venv/
+env/
+
+# Configurações sensíveis (NÃO commitar chaves)
+.env
+
+# Diretório de dados e banco SQLite
+data/
+*.db
+*.sqlite3
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Arquivos temporários e logs
+*.log
+*.pdf
