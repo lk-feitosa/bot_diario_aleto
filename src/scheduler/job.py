@@ -40,8 +40,24 @@ async def run_daily_check_pipeline(app: Optional[Application] = None) -> Dict[st
 
     for item in reversed(itens):  # Processa em ordem cronológica (mais antigo para o mais novo)
         with get_db() as db:
+            total_banco = db.query(Edicao).count()
             existente = db.query(Edicao).filter(Edicao.url_download == item.url_download).first()
             if existente:
+                continue
+
+            # Se o banco estiver completamente vazio (primeira execução do sistema),
+            # processa apenas a edição mais recente (item == itens[0]) e ignora as anteriores
+            if total_banco == 0 and item != itens[0]:
+                logger.info(f"⏭️ Ignorando edição histórica nº {item.numero} na primeira inicialização.")
+                # Registra no banco para não processar depois, mas sem enviar notificações
+                edicao_historica = Edicao(
+                    numero=item.numero,
+                    data_publicacao=item.data,
+                    url_download=item.url_download,
+                    processado_em=datetime.utcnow()
+                )
+                db.add(edicao_historica)
+                db.commit()
                 continue
 
             logger.info(f"✨ Nova edição detectada! Diário nº {item.numero} ({item.data}) - {item.url_download}")
