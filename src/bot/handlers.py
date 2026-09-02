@@ -73,6 +73,8 @@ async def monitorar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     """Adiciona um nome ou termo à lista de monitoramento do usuário."""
     chat_id = update.effective_chat.id
     termo = " ".join(context.args).strip() if context.args else ""
+    # Remove automaticamente delimitadores como < >, [ ], " ou ' que possam ter sido digitados por engano
+    termo = termo.strip("<>\"'[] ")
 
     if not termo:
         await update.message.reply_text(
@@ -167,6 +169,7 @@ async def remover_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Remove um nome da lista de monitoramento do usuário."""
     chat_id = update.effective_chat.id
     termo = " ".join(context.args).strip() if context.args else ""
+    termo = termo.strip("<>\"'[] ")
 
     if not termo:
         await update.message.reply_text(
