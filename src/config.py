@@ -42,11 +42,12 @@ class Settings(BaseSettings):
     def get_watch_names_list(self) -> List[str]:
         if not self.DEFAULT_WATCH_NAMES:
             return []
-        return [
-            name.strip()
-            for name in self.DEFAULT_WATCH_NAMES.split(",")
-            if name.strip()
-        ]
+        nomes = []
+        for name in self.DEFAULT_WATCH_NAMES.split(","):
+            clean = name.strip("\"' ")
+            if clean:
+                nomes.append(clean)
+        return nomes
 
     def setup_directories(self) -> None:
         self.DATA_DIR.mkdir(parents=True, exist_ok=True)

@@ -84,47 +84,52 @@ async def monitorar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
 
-    with get_db() as db:
-        usuario = db.query(Usuario).filter(Usuario.chat_id == chat_id).first()
-        if not usuario:
-            usuario = Usuario(
-                chat_id=chat_id,
-                username=update.effective_user.username,
-                first_name=update.effective_user.first_name,
-                ativo=True
-            )
-            db.add(usuario)
-            db.flush()
-
-        existente = db.query(TermoMonitorado).filter(
-            TermoMonitorado.usuario_id == usuario.id,
-            TermoMonitorado.termo.ilike(termo)
-        ).first()
-
-        if existente:
-            if not existente.ativo:
-                existente.ativo = True
+    try:
+        with get_db() as db:
+            usuario = db.query(Usuario).filter(Usuario.chat_id == chat_id).first()
+            if not usuario:
+                usuario = Usuario(
+                    chat_id=chat_id,
+                    username=update.effective_user.username,
+                    first_name=update.effective_user.first_name,
+                    ativo=True
+                )
+                db.add(usuario)
                 db.commit()
-                await update.message.reply_text(f"✅ O termo `{termo}` foi reativado para monitoramento!", parse_mode=ParseMode.MARKDOWN)
-            else:
-                await update.message.reply_text(f"ℹ️ O termo `{termo}` já está ativo no seu monitoramento.", parse_mode=ParseMode.MARKDOWN)
-            return
+                db.refresh(usuario)
 
-        novo_termo = TermoMonitorado(
-            usuario_id=usuario.id,
-            termo=termo,
-            ativo=True,
-            criado_em=datetime.utcnow()
+            existente = db.query(TermoMonitorado).filter(
+                TermoMonitorado.usuario_id == usuario.id,
+                TermoMonitorado.termo.ilike(termo)
+            ).first()
+
+            if existente:
+                if not existente.ativo:
+                    existente.ativo = True
+                    db.commit()
+                    await update.message.reply_text(f"✅ O termo `{termo}` foi reativado para monitoramento!", parse_mode=ParseMode.MARKDOWN)
+                else:
+                    await update.message.reply_text(f"ℹ️ O termo `{termo}` já está ativo no seu monitoramento.", parse_mode=ParseMode.MARKDOWN)
+                return
+
+            novo_termo = TermoMonitorado(
+                usuario_id=usuario.id,
+                termo=termo,
+                ativo=True,
+                criado_em=datetime.utcnow()
+            )
+            db.add(novo_termo)
+            db.commit()
+
+        await update.message.reply_text(
+            f"✅ **Nome monitorado com sucesso!**\n\n"
+            f"🔍 Termo adicionado: `{termo}`\n"
+            f"🚨 Você receberá um alerta prioritário com o trecho exato sempre que este nome for publicado no Diário da ALETO.",
+            parse_mode=ParseMode.MARKDOWN
         )
-        db.add(novo_termo)
-        db.commit()
-
-    await update.message.reply_text(
-        f"✅ **Nome monitorado com sucesso!**\n\n"
-        f"🔍 Termo adicionado: `{termo}`\n"
-        f"🚨 Você receberá um alerta prioritário com o trecho exato sempre que este nome for publicado no Diário da ALETO.",
-        parse_mode=ParseMode.MARKDOWN
-    )
+    except Exception as e:
+        logger.error(f"Erro ao executar /monitorar para chat_id={chat_id}: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Ocorreu um erro ao salvar o nome: `{e}`", parse_mode=ParseMode.MARKDOWN)
 
 
 async def listar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

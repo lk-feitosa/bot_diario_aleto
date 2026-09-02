@@ -3,7 +3,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from telegram import Bot
 from telegram.constants import ParseMode
-from telegram.ext import Application, ApplicationBuilder, CommandHandler
+from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes
 
 from src.config import settings
 from src.database.models import Usuario, Edicao
@@ -41,6 +41,11 @@ def create_bot_app() -> Optional[Application]:
     app.add_handler(CommandHandler("remover", remover_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("verificar", verificar_command))
+
+    async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        logger.error(f"⚠️ Erro capturado no Telegram Bot: {context.error}", exc_info=context.error)
+
+    app.add_error_handler(global_error_handler)
 
     return app
 
