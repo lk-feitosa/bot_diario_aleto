@@ -2,6 +2,9 @@ import asyncio
 import logging
 import signal
 import sys
+import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from rich.logging import RichHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -9,6 +12,31 @@ from src.config import settings
 from src.database.session import init_db
 from src.bot.bot import create_bot_app
 from src.scheduler.job import run_daily_check_pipeline
+
+# Servidor HTTP simples para atender aos requisitos de Web Service do Render/Cloud
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"status": "ok", "service": "diario_aleto_bot"}\n')
+
+    def log_message(self, format, *args):
+        # Silencia logs repetitivos de health check
+        return
+
+
+def start_health_check_server():
+    """Inicia um servidor HTTP em thread separada para plataformas que exigem porta aberta (ex: Render)."""
+    port = int(os.getenv("PORT", "8080"))
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        logger.info(f"🌐 Servidor de Health Check ativo na porta {port} (Render/Cloud compatível)")
+    except Exception as e:
+        logger.warning(f"Não foi possível iniciar servidor de health check na porta {port}: {e}")
+
 
 # Configuração de Logging elegante
 logging.basicConfig(
@@ -22,6 +50,9 @@ logger = logging.getLogger("diario_aleto")
 
 async def main() -> None:
     logger.info("🚀 Iniciando o Bot do Diário Oficial da ALETO...")
+
+    # Inicia health check HTTP para Render/Cloud
+    start_health_check_server()
 
     # 1. Inicializa o banco de dados e diretórios
     init_db()
