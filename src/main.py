@@ -5,7 +5,7 @@ import signal
 import sys
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from rich.logging import RichHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -15,7 +15,6 @@ from src.database.session import init_db
 from src.bot.bot import create_bot_app
 from src.scheduler.job import run_daily_check_pipeline
 
-# Servidor HTTP simples para atender aos requisitos de Web Service do Render/Cloud
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -27,7 +26,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         # Silencia logs repetitivos de health check
         return
 
-
 def start_health_check_server():
     """Inicia um servidor HTTP em thread separada para plataformas que exigem porta aberta (ex: Render)."""
     port = int(os.getenv("PORT", "8080"))
@@ -35,16 +33,16 @@ def start_health_check_server():
         server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        logger.info(f"🌐 Servidor de Health Check ativo na porta {port} (Render/Cloud compatível)")
+        token = settings.TELEGRAM_BOT_TOKEN or ""
+        mask_token = f"{token[:12]}..." if token and len(token) >= 12 else "***"
+        logger.info(f"🌐 Servidor de Health Check ativo na porta {port} (Render/Cloud compatível). Token protegido: {mask_token}")
     except Exception as e:
         logger.warning(f"Não foi possível iniciar servidor de health check na porta {port}: {e}")
 
-
-# Configuração de Logging
 class JsonFormatter(logging.Formatter):
     def format(self, record):
         log_record = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
             "level": record.levelname,
             "message": record.getMessage(),
             "logger": record.name,
@@ -55,18 +53,23 @@ class JsonFormatter(logging.Formatter):
 
 if os.getenv("RENDER") or os.getenv("JSON_LOGS"):
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JsonFormatter())
-    logging.basicConfig(level=settings.LOG_LEVEL, handlers=[handler])
+    formatter = JsonFormatter()
 else:
-    from rich.logging import RichHandler
-    logging.basicConfig(
-        level=settings.LOG_LEVEL,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True, show_path=False)]
-    )
-logger = logging.getLogger("diario_aleto")
+    handler = logging.StreamHandler()
+    formatter = None
 
+if formatter:
+    handler.setFormatter(formatter)
+
+logging.basicConfig(
+    level=settings.LOG_LEVEL,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[handler]
+)
+
+# Import anônimo do bot somente após mexer em app
+logger = logging.getLogger("diario_aleto")
 
 async def main() -> None:
     logger.info("🚀 Iniciando o Bot do Diário Oficial da ALETO...")
@@ -93,46 +96,57 @@ async def main() -> None:
         replace_existing=True
     )
     scheduler.start()
-    logger.info(
-        f"⏰ Agendador iniciado: checagens a cada {settings.CHECK_INTERVAL_MINUTES} minutos "
-        f"(Timezone: {settings.TIMEZONE})."
-    )
+    logger.info(f"⏰ Agendador iniciado: checagens a cada {settings.CHECK_INTERVAL_MINUTES} minutos "
+                f"(Timezone: {settings.TIMEZONE}).")
 
     # 4. Dispara uma checagem inicial assíncrona após a inicialização
     asyncio.create_task(run_daily_check_pipeline(app))
 
-    # 5. Inicia o Polling do Bot do Telegram se o token foi configurado
-    if app:
-        logger.info("🤖 Iniciando polling interativo do bot no Telegram...")
-        async with app:
-            await app.start()
-            await app.updater.start_polling()
-
-            # Mantém a aplicação rodando até receber sinal de parada
-            stop_event = asyncio.Event()
-
-            def signal_handler():
-                logger.info("🛑 Sinal de encerramento recebido...")
-                stop_event.set()
-
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                try:
-                    asyncio.get_event_loop().add_signal_handler(sig, signal_handler)
-                except NotImplementedError:
-                    pass
-
-            await stop_event.wait()
-            logger.info("Encerrando bot do Telegram e agendador...")
-            await app.updater.stop()
-            await app.stop()
-    else:
-        logger.warning("⚠️ Bot rodando em MODO SOMENTE-SERVIÇO (Sem polling do Telegram).")
-        logger.info("Para ativar o bot no Telegram, preencha o TELEGRAM_BOT_TOKEN no seu arquivo .env.")
-        
+    # 5. Verifica se o bot está configurado corretamente antes de iniciar polling
+    token = settings.TELEGRAM_BOT_TOKEN or ""
+    if not token:
+        logger.warning("⚠️ Bot não configurado (TELEGRAM_BOT_TOKEN não informado). Rodando em MODO PASSIVO (sem polling do Telegram).")
         # Mantém processo vivo para o agendador
         while True:
             await asyncio.sleep(3600)
+        return
 
+    # Validação preventiva: verificar se o bot existe e responde
+    # Isso garante que não tentamos inicializar com um token inválido
+    # e evitamos exposição do token completo em logs
+    try:
+        bot = await app.bot.initialize()
+        logger.info("✅ Bot Telegram inicializado com sucesso. Iniciando polling...")
+    except Exception as e_token:
+        logger.warning(f"⚠️ Token Telegram inválido ou bot inalcançável: {e_token}")
+        logger.warning("Verifique se TELEGRAM_BOT_TOKEN no arquivo .env (ou Render Config) está correto.")
+        # Mantém processo vivo para o agendador
+        while True:
+            await asyncio.sleep(3600)
+        return
+
+    logger.info("🤖 Iniciando polling interativo do bot no Telegram...")
+
+    async with app:
+        await app.start()
+        await app.updater.start_polling()
+
+        stop_event = asyncio.Event()
+
+        def signal_handler():
+            logger.info("🛑 Sinal de encerramento recebido...")
+            stop_event.set()
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                asyncio.get_event_loop().add_signal_handler(sig, signal_handler)
+            except NotImplementedError:
+                pass
+
+        await stop_event.wait()
+        logger.info("Encerrando bot do Telegram e agendador...")
+        await app.updater.stop()
+        await app.stop()
 
 if __name__ == "__main__":
     try:
