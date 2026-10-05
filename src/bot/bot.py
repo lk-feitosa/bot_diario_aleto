@@ -104,8 +104,8 @@ async def broadcast_edition_summary(bot: Bot, edicao: Edicao) -> None:
                 parse_mode=ParseMode.MARKDOWN
             )
             logger.info(f"Resumo da edição nº {edicao.numero} entregue para chat_id={chat_id}")
-            # Pequeno intervalo para respeitar o limite de 30 msgs/seg do Telegram (suporta 1000+ usuários tranquilamente)
-            await asyncio.sleep(0.04)
+            # Pequeno intervalo para respeitar o limite do Telegram de forma mais amigável
+            await asyncio.sleep(0.1)
         except Exception as e:
             err_msg = str(e).lower()
             if "bot was blocked" in err_msg or "user is deactivated" in err_msg or "chat not found" in err_msg:

@@ -1,9 +1,11 @@
 import asyncio
 import logging
+import json
 import signal
 import sys
 import os
 import threading
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from rich.logging import RichHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -38,13 +40,31 @@ def start_health_check_server():
         logger.warning(f"Não foi possível iniciar servidor de health check na porta {port}: {e}")
 
 
-# Configuração de Logging elegante
-logging.basicConfig(
-    level=settings.LOG_LEVEL,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(rich_tracebacks=True, show_path=False)]
-)
+# Configuração de Logging
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        log_record = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "logger": record.name,
+        }
+        if record.exc_info:
+            log_record["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_record)
+
+if os.getenv("RENDER") or os.getenv("JSON_LOGS"):
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JsonFormatter())
+    logging.basicConfig(level=settings.LOG_LEVEL, handlers=[handler])
+else:
+    from rich.logging import RichHandler
+    logging.basicConfig(
+        level=settings.LOG_LEVEL,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(rich_tracebacks=True, show_path=False)]
+    )
 logger = logging.getLogger("diario_aleto")
 
 

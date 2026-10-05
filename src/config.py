@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     )
 
     # Agendamento
-    CHECK_INTERVAL_MINUTES: int = Field(default=30, description="Intervalo de checagem em minutos")
+    CHECK_INTERVAL_MINUTES: int = Field(default=60, description="Intervalo de checagem em minutos")
     TIMEZONE: str = Field(default="America/Araguaina", description="Timezone padrão")
 
     # Diretórios e Armazenamento
