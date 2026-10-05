@@ -5,6 +5,10 @@ services:
     plan: free
     region: oregon
     autoDeploy: true
+    disk:
+      name: sqlite-data
+      mountPath: /app/data
+      sizeGB: 1
     envVars:
       - key: PORT
         value: "8080"
@@ -19,10 +23,10 @@ services:
       - key: DEFAULT_WATCH_NAMES
         sync: false
       - key: CHECK_INTERVAL_MINUTES
-        value: "30"
+        value: "60"
       - key: TIMEZONE
         value: "America/Araguaina"
       - key: DATA_DIR
-        value: "./data"
+        value: "/app/data"
       - key: DATABASE_URL
-        value: "sqlite:///./data/diario_aleto.db"
+        value: "sqlite:////app/data/diario_aleto.db"

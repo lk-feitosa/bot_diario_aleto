@@ -34,7 +34,9 @@ def format_welcome_message(first_name: Optional[str] = None) -> str:
         f"• `/remover <nome>` - Remover um nome da lista\n"
         f"• `/verificar` - Forçar verificação manual de novas edições\n"
         f"• `/status` - Consultar status do monitoramento e banco de dados\n"
-        f"• `/ajuda` - Exibir esta mensagem de ajuda"
+        f"• `/ajuda` - Exibir esta mensagem de ajuda\n\n"
+        f"🔒 **Aviso de Privacidade:**\n"
+        f"O bot só acessa o portal da ALETO público, não armazena seus dados além do seu ID de chat e dos termos de monitoramento. As chaves de acesso são gerenciadas de forma segura apenas na infraestrutura (ex: Render) pelo administrador."
     )
 
 

@@ -43,6 +43,7 @@ async def run_daily_check_pipeline(app: Optional[Application] = None) -> Dict[st
             total_banco = db.query(Edicao).count()
             existente = db.query(Edicao).filter(Edicao.url_download == item.url_download).first()
             if existente:
+                logger.info(f"⏭️ Edição já processada (cache local/banco encontrado): {item.url_download}")
                 continue
 
             # Se o banco estiver completamente vazio (primeira execução do sistema),

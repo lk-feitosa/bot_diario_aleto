@@ -1,4 +1,4 @@
-# 🤖 Bot do Diário Oficial da ALETO (Telegram + IA)
+# 🤖 GhostWriter (Bot do Diário Oficial da ALETO)
 
 Sistema autônomo que monitora diariamente as edições publicadas do Diário Oficial da **Assembleia Legislativa do Estado do Tocantins ([ALETO](https://www.al.to.leg.br/diario))**, processa os arquivos PDF com **PyMuPDF**, gera resumos completos e estruturados com inteligência artificial (**Google Gemini**) e dispara alertas prioritários imediatos caso seu nome ou termos de interesse sejam publicados.
 
@@ -76,7 +76,7 @@ python -m src.main
 
 ---
 
-### 4. Executando com Docker
+### 4. Executando com Docker (ou Deploy no Render)
 
 Se preferir rodar em um servidor (VPS, cloud) 24/7 de forma isolada:
 
@@ -88,6 +88,11 @@ Para acompanhar os logs:
 ```bash
 docker compose logs -f
 ```
+
+**Para Deploy no Render (Cloud):**
+- O projeto contém um arquivo `render.yaml` pronto para deploy com Blueprint.
+- Na plataforma Render, conecte o repositório e o Render configurará o serviço, incluindo o Healthcheck na porta 8080 e a montagem do disco persistente para o SQLite em `/app/data`.
+- Lembre-se de configurar as variáveis de ambiente (como `TELEGRAM_BOT_TOKEN` e `GEMINI_API_KEY`) no dashboard do serviço.
 
 ---
 
@@ -133,6 +138,20 @@ diario_aleto/
     └── scheduler/            # Agendador de tarefas
         └── job.py
 ```
+
+---
+
+## 💡 Apêndice: Exemplos de Uso no Dia a Dia
+
+Aqui estão alguns cenários de como o bot funciona na prática:
+
+**Exemplo 1: Recebendo resumos diários**
+> Ao receber a notificação automática ou enviar `/ultimo`, o bot devolverá uma mensagem dividida em seções claras (RH, Licitações, Atos), explicando exatamente o formato e contexto da publicação, sem que você precise abrir o PDF.
+
+**Exemplo 2: Comandos experimentais / fluxo futuro**
+> Comandos de fluxo avançado como `/alerts_quase_10` (serviços nas bifurcações-stream-tempo) não existem ativamente ainda, mas o bot já possui a arquitetura assíncrona base preparada para escalar com esse tipo de fluxo em novas atualizações.
+
+> **Nota sobre Chaves e Acessos:** O bot é seguro e *server-side*. Fica claro aos usuários que as chaves da API (Gemini, Telegram) são atribuídas apenas no ambiente de *deployment* construído pelo administrador (no painel do Render/Docker), impossibilitando acesso cruzado de usuários finais.
 
 ---
 
