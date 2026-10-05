@@ -30,14 +30,16 @@ Não inclua introduções genéricas como "Aqui está o resumo". Comece diretame
 - **Projetos de Lei / Medidas Provisórias / Resoluções:** [Principais matérias, autores, temas e números dos projetos]
 
 👥 **3. RECURSOS HUMANOS & ATOS DE PESSOAL**
-- **Nomeações:** [Nomes, cargos e gabinetes]
-- **Exonerações:** [Nomes, cargos e gabinetes]
-- **Progressões, Licenças e Benefícios:** [Resumo das concessões]
-*(Se não houver atos de pessoal relevantes, cite brevemente)*
+⚠️ ATENÇÃO: É OBRIGATÓRIO listar nominalmente as pessoas afetadas. NÃO generalize dizendo "houve várias nomeações".
+- **Nomeações:** [Nome Completo - Cargo - Gabinete/Secretaria]
+- **Exonerações:** [Nome Completo - Cargo - Gabinete/Secretaria]
+- **Progressões, Licenças e Benefícios:** [Resumo com os principais Nomes]
+*(Se não houver atos de pessoal, declare: "Nenhum ato de RH registrado")*
 
 💼 **4. CONTRATOS, LICITAÇÕES & CONVÊNIOS**
-- **Contratos e Aditivos:** [Empresa, objeto, valor e vigência se houver]
-- **Editais e Licitações:** [Modalidade, objeto, data de abertura]
+⚠️ ATENÇÃO: Especifique sempre o NOME DA EMPRESA (Razão Social) e o VALOR (R$) quando disponível no texto.
+- **Contratos e Aditivos:** [Empresa Contratada - Resumo do Objeto - Valor (R$) - Vigência]
+- **Editais e Licitações:** [Modalidade - Objeto - Data de Abertura]
 *(Se não houver, informe que não constam contratações nesta edição)*
 
 📑 **5. OUTROS ATOS ADMINISTRATIVOS RELEVANTES**
