@@ -6,8 +6,12 @@ from src.config import settings
 from .models import Base, TermoMonitorado
 
 db_url = settings.DATABASE_URL
+# O Render injeta URLs com 'postgres://', mas o SQLAlchemy exige 'postgresql://'.
+# Além disso, o SQLAlchemy 2.0+ exige a especificação do driver psycopg2.
 if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
+    db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+elif db_url.startswith("postgresql://"):
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 engine_kwargs = {
     "echo": (settings.LOG_LEVEL == "DEBUG")
