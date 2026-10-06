@@ -10,8 +10,11 @@ logger = logging.getLogger(__name__)
 
 # Ajuste para compatibilidade com URLs do Render/Supabase
 db_url = settings.DATABASE_URL
+# O SQLAlchemy 2.0+ exige o driver explícito psycopg2 se a lib for psycopg2-binary
 if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
+    db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+elif db_url.startswith("postgresql://"):
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 # Configurações de pool para bancos externos (Supabase)
 engine_args = {}
