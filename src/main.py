@@ -129,6 +129,24 @@ async def main() -> None:
 
     async with app:
         await app.start()
+        
+        # Forçar atualização do menu de comandos no Telegram
+        from telegram import BotCommand
+        try:
+            await app.bot.set_my_commands([
+                BotCommand("start", "Inicia e cadastra para receber resumos"),
+                BotCommand("ultimo", "Exibe o resumo da última publicação"),
+                BotCommand("monitorar", "Adiciona nome/termo para alerta"),
+                BotCommand("listar", "Lista seus termos em monitoramento"),
+                BotCommand("remover", "Remove um nome da sua lista"),
+                BotCommand("status", "Exibe o status da aplicação"),
+                BotCommand("verificar", "Força varredura manual no portal"),
+                BotCommand("ajuda", "Exibe a mensagem de ajuda do bot"),
+            ])
+            logger.info("✅ Menu de comandos atualizado no Telegram!")
+        except Exception as e:
+            logger.error(f"Não foi possível atualizar o menu de comandos: {e}")
+
         await app.updater.start_polling()
 
         stop_event = asyncio.Event()
