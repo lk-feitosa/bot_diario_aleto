@@ -1,56 +1,42 @@
-from contextlib import contextmanager
-from typing import Generator
+import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
+from contextlib import contextmanager
+
 from src.config import settings
-from .models import Base, TermoMonitorado
+from src.database.models import Base
 
+logger = logging.getLogger(__name__)
+
+# Ajuste para compatibilidade com URLs do Render/Supabase
 db_url = settings.DATABASE_URL
-# O Render injeta URLs com 'postgres://', mas o SQLAlchemy exige 'postgresql://'.
-# Além disso, o SQLAlchemy 2.0+ exige a especificação do driver psycopg2.
 if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
-elif db_url.startswith("postgresql://"):
-    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-engine_kwargs = {
-    "echo": (settings.LOG_LEVEL == "DEBUG")
-}
+# Configurações de pool para bancos externos (Supabase)
+engine_args = {}
+if db_url.startswith("postgresql"):
+    engine_args = {
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_timeout": 30,
+        "pool_recycle": 1800,
+    }
 
-if "sqlite" in db_url:
-    engine_kwargs["connect_args"] = {"check_same_thread": False}
-else:
-    # PostgreSQL / Supabase
-    engine_kwargs["pool_pre_ping"] = True
-    engine_kwargs["pool_recycle"] = 300
-
-engine = create_engine(db_url, **engine_kwargs)
-
+engine = create_engine(db_url, **engine_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-
-def init_db() -> None:
-    """Inicializa as tabelas do banco de dados e carrega termos padrão se configurados."""
-    settings.setup_directories()
-    Base.metadata.create_all(bind=engine)
-
-    # Inserir termos padrão do .env se ainda não existirem
-    default_names = settings.get_watch_names_list()
-    if default_names:
-        with get_db() as db:
-            for name in default_names:
-                existing = db.query(TermoMonitorado).filter(
-                    TermoMonitorado.termo == name,
-                    TermoMonitorado.usuario_id.is_(None)
-                ).first()
-                if not existing:
-                    db.add(TermoMonitorado(termo=name, usuario_id=None, ativo=True))
-            db.commit()
-
+def init_db():
+    """Cria as tabelas se não existirem."""
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("✅ Tabelas do banco de dados verificadas/criadas.")
+    except Exception as e:
+        logger.error(f"❌ Erro ao inicializar banco de dados: {e}")
+        raise
 
 @contextmanager
-def get_db() -> Generator[Session, None, None]:
-    """Context manager para sessões do banco de dados."""
+def get_db():
     db = SessionLocal()
     try:
         yield db
