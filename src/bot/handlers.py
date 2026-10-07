@@ -5,10 +5,29 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from src.database.session import get_db
-from src.database.models import Usuario, TermoMonitorado, Edicao
+from src.database.models import Usuario, TermoMonitorado, Edicao, InteracaoLog
 from src.bot.messages import format_welcome_message, split_long_message
 
 logger = logging.getLogger(__name__)
+
+
+def _registrar_interacao(db, chat_id: int, comando: str, parametros: str = None) -> None:
+    """Registra a interação no log e atualiza o ultimo_acesso do usuário."""
+    # Log de interação
+    log = InteracaoLog(
+        chat_id=chat_id,
+        comando=comando,
+        parametros=parametros[:200] if parametros else None,
+        executado_em=datetime.utcnow()
+    )
+    db.add(log)
+
+    # Atualiza ultimo_acesso do usuário
+    usuario = db.query(Usuario).filter(Usuario.chat_id == chat_id).first()
+    if usuario:
+        usuario.ultimo_acesso = datetime.utcnow()
+
+    db.commit()
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -32,7 +51,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         else:
             if not usuario.ativo:
                 usuario.ativo = True
+                usuario.bloqueado_em = None  # Limpa flag de bloqueio ao retornar
                 db.commit()
+
+        _registrar_interacao(db, chat_id, "/start")
 
     msg = format_welcome_message(user.first_name)
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
@@ -40,13 +62,20 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Exibe instruções de uso do bot."""
+    chat_id = update.effective_chat.id
+    with get_db() as db:
+        _registrar_interacao(db, chat_id, "/ajuda")
+
     msg = format_welcome_message(update.effective_user.first_name)
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
 
 
 async def ultimo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Retorna o resumo da última edição do diário processada."""
+    chat_id = update.effective_chat.id
+
     with get_db() as db:
+        _registrar_interacao(db, chat_id, "/ultimo")
         edicao = db.query(Edicao).order_by(Edicao.id.desc()).first()
 
     if not edicao:
@@ -86,6 +115,8 @@ async def monitorar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     try:
         with get_db() as db:
+            _registrar_interacao(db, chat_id, "/monitorar", termo)
+
             usuario = db.query(Usuario).filter(Usuario.chat_id == chat_id).first()
             if not usuario:
                 usuario = Usuario(
@@ -137,6 +168,8 @@ async def listar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     chat_id = update.effective_chat.id
 
     with get_db() as db:
+        _registrar_interacao(db, chat_id, "/listar")
+
         usuario = db.query(Usuario).filter(Usuario.chat_id == chat_id).first()
         if not usuario:
             termos_usuario = []
@@ -184,6 +217,8 @@ async def remover_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     with get_db() as db:
+        _registrar_interacao(db, chat_id, "/remover", termo)
+
         usuario = db.query(Usuario).filter(Usuario.chat_id == chat_id).first()
         if not usuario:
             await update.message.reply_text("ℹ️ Nenhum termo encontrado.", parse_mode=ParseMode.MARKDOWN)
@@ -206,7 +241,11 @@ async def remover_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Exibe estatísticas e status do bot."""
+    chat_id = update.effective_chat.id
+
     with get_db() as db:
+        _registrar_interacao(db, chat_id, "/status")
+
         total_edicoes = db.query(Edicao).count()
         total_usuarios = db.query(Usuario).filter(Usuario.ativo == True).count()
         total_termos = db.query(TermoMonitorado).filter(TermoMonitorado.ativo == True).count()
@@ -233,6 +272,10 @@ async def verificar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     """Dispara uma verificação manual forçada de novas edições."""
     from src.scheduler.job import run_daily_check_pipeline
 
+    chat_id = update.effective_chat.id
+    with get_db() as db:
+        _registrar_interacao(db, chat_id, "/verificar")
+
     await update.message.reply_text("🔄 **Iniciando verificação manual no portal da ALETO...**\nAguarde alguns instantes.")
     try:
         resultado = await run_daily_check_pipeline(context.application)
@@ -243,3 +286,4 @@ async def verificar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     except Exception as e:
         logger.error(f"Erro na verificação manual: {e}", exc_info=True)
         await update.message.reply_text(f"❌ Ocorreu um erro durante a verificação: `{e}`", parse_mode=ParseMode.MARKDOWN)
+

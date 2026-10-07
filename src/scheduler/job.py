@@ -115,6 +115,13 @@ async def run_daily_check_pipeline(app: Optional[Application] = None) -> Dict[st
             db.add(nova_edicao)
             db.flush()  # Para obter o ID da nova edição
 
+            # Limpa o PDF do disco após processamento completo
+            try:
+                caminho_pdf.unlink(missing_ok=True)
+                logger.info(f"🗑️ PDF temporário removido: {caminho_pdf.name}")
+            except Exception as e_clean:
+                logger.warning(f"Não foi possível remover PDF temporário: {e_clean}")
+
             # 6. Salva Alertas no Banco e Dispara Notificações
             for match in matches:
                 # Localiza usuários associados ao termo
