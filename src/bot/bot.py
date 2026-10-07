@@ -1,12 +1,13 @@
 import asyncio
 import logging
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes
 
 from src.config import settings
-from src.database.models import Usuario, Edicao
+from src.database.models import Usuario, Edicao, EdicaoEnviada
 from src.database.session import get_db
 from src.services.alert_engine import AlertMatch
 from src.bot.messages import format_alert_message, split_long_message
@@ -104,6 +105,16 @@ async def broadcast_edition_summary(bot: Bot, edicao: Edicao) -> None:
                 parse_mode=ParseMode.MARKDOWN
             )
             logger.info(f"Resumo da edição nº {edicao.numero} entregue para chat_id={chat_id}")
+
+            # Registra entrega com sucesso
+            with get_db() as db:
+                db.add(EdicaoEnviada(
+                    edicao_id=edicao.id,
+                    chat_id=chat_id,
+                    sucesso=True
+                ))
+                db.commit()
+
             # Pequeno intervalo para respeitar o limite do Telegram de forma mais amigável
             await asyncio.sleep(0.1)
         except Exception as e:
@@ -114,7 +125,15 @@ async def broadcast_edition_summary(bot: Bot, edicao: Edicao) -> None:
                     u = db.query(Usuario).filter(Usuario.chat_id == chat_id).first()
                     if u:
                         u.ativo = False
+                        u.bloqueado_em = datetime.utcnow()
                         db.commit()
+                    # Registra entrega falha
+                    db.add(EdicaoEnviada(
+                        edicao_id=edicao.id,
+                        chat_id=chat_id,
+                        sucesso=False
+                    ))
+                    db.commit()
             else:
                 logger.error(f"Erro ao entregar resumo para chat_id={chat_id}: {e}")
 
