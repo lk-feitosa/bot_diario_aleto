@@ -79,7 +79,8 @@ async def main() -> None:
 
     # 1. Inicializa o banco de dados e diretórios
     init_db()
-    logger.info("📦 Banco de dados SQLite inicializado com sucesso.")
+    banco = "PostgreSQL" if settings.DATABASE_URL.startswith(("postgres://", "postgresql://")) else "SQLite"
+    logger.info(f"📦 Banco de dados {banco} inicializado com sucesso.")
 
     # 2. Constrói a aplicação do Telegram Bot
     app = create_bot_app()
