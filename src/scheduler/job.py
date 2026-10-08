@@ -17,7 +17,10 @@ from src.bot.bot import send_alert_to_user, broadcast_edition_summary
 logger = logging.getLogger(__name__)
 
 
-async def run_daily_check_pipeline(app: Optional[Application] = None) -> Dict[str, Any]:
+async def run_daily_check_pipeline(
+    app: Optional[Application] = None,
+    force_current: bool = False,
+) -> Dict[str, Any]:
     """
     Executa o ciclo completo de monitoramento:
     1. Varre o portal da ALETO em busca de novos diários.
@@ -54,9 +57,12 @@ async def run_daily_check_pipeline(app: Optional[Application] = None) -> Dict[st
         with get_db() as db:
             total_banco = db.query(Edicao).count()
             existente = db.query(Edicao).filter(Edicao.url_download == item.url_download).first()
-            if existente:
+            if existente and not force_current:
                 logger.info(f"⏭️ Edição já processada (cache local/banco encontrado): {item.url_download}")
                 continue
+
+            if existente:
+                logger.info(f"🔁 Regenerando resumo da edição nº {item.numero} por solicitação manual.")
 
             logger.info(f"✨ Nova edição detectada! Diário nº {item.numero} ({item.data}) - {item.url_download}")
 
@@ -93,6 +99,10 @@ async def run_daily_check_pipeline(app: Optional[Application] = None) -> Dict[st
             # Executa a engine de busca
             matches: List[AlertMatch] = AlertEngine.search_terms(doc_data, lista_termos_busca)
 
+            # Ao regenerar, não duplica alertas já registrados para a edição.
+            if existente:
+                matches = []
+
             # 4. Geração do Resumo Inteligente com Gemini
             resumo_ia = await summarizer.generate_summary(
                 doc_data=doc_data,
@@ -101,16 +111,22 @@ async def run_daily_check_pipeline(app: Optional[Application] = None) -> Dict[st
             )
 
             # 5. Salva a Edição no Banco
-            nova_edicao = Edicao(
-                numero=item.numero,
-                data_publicacao=item.data,
-                url_download=item.url_download,
-                pdf_path=None,
-                resumo=resumo_ia,
-                processado_em=datetime.utcnow()
-            )
-            db.add(nova_edicao)
-            db.flush()  # Para obter o ID da nova edição
+            if existente:
+                nova_edicao = existente
+                nova_edicao.resumo = resumo_ia
+                nova_edicao.pdf_path = None
+                nova_edicao.processado_em = datetime.utcnow()
+            else:
+                nova_edicao = Edicao(
+                    numero=item.numero,
+                    data_publicacao=item.data,
+                    url_download=item.url_download,
+                    pdf_path=None,
+                    resumo=resumo_ia,
+                    processado_em=datetime.utcnow()
+                )
+                db.add(nova_edicao)
+                db.flush()  # Para obter o ID da nova edição
 
             # Limpa o PDF do disco após processamento completo
             try:
