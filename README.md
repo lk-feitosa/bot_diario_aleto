@@ -91,8 +91,8 @@ docker compose logs -f
 
 **Para Deploy no Render (Cloud):**
 - O projeto contém um arquivo `render.yaml` pronto para deploy com Blueprint.
-- Na plataforma Render, conecte o repositório e o Render configurará o serviço, incluindo o Healthcheck na porta 8080 e a montagem do disco persistente para o SQLite em `/app/data`.
-- Lembre-se de configurar as variáveis de ambiente (como `TELEGRAM_BOT_TOKEN` e `GEMINI_API_KEY`) no dashboard do serviço.
+- Na plataforma Render, conecte o repositório e configure `DATABASE_URL` com a conexão Session Pooler do Supabase (porta 5432). O serviço mantém apenas PDFs temporários durante o processamento.
+- Lembre-se de configurar as variáveis de ambiente (como `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY` e `OPENAI_API_KEY`) no dashboard do serviço.
 
 ---
 
