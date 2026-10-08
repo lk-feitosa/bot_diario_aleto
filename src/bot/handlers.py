@@ -1,9 +1,11 @@
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
+from src.config import settings
 from src.database.session import get_db
 from src.database.models import Usuario, TermoMonitorado, Edicao, InteracaoLog
 from src.bot.messages import format_welcome_message, split_long_message
@@ -31,13 +33,15 @@ def _registrar_interacao(db, chat_id: int, comando: str, parametros: str = None)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Registra o usuário e envia mensagem de boas-vindas."""
+    """Registra o usuário e envia a edição do dia no primeiro acesso."""
     user = update.effective_user
     chat_id = update.effective_chat.id
+    primeiro_acesso = False
 
     with get_db() as db:
         usuario = db.query(Usuario).filter(Usuario.chat_id == chat_id).first()
         if not usuario:
+            primeiro_acesso = True
             usuario = Usuario(
                 chat_id=chat_id,
                 username=user.username,
@@ -56,8 +60,39 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         _registrar_interacao(db, chat_id, "/start")
 
+        edicao_inicial = None
+        if primeiro_acesso:
+            data_hoje = datetime.now(ZoneInfo(settings.TIMEZONE)).strftime("%d/%m/%Y")
+            edicao_inicial = db.query(Edicao).filter(
+                Edicao.data_publicacao == data_hoje,
+                Edicao.resumo.isnot(None)
+            ).order_by(Edicao.id.desc()).first()
+            if not edicao_inicial:
+                edicao_inicial = db.query(Edicao).filter(
+                    Edicao.resumo.isnot(None)
+                ).order_by(Edicao.id.desc()).first()
+
     msg = format_welcome_message(user.first_name)
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+
+    if primeiro_acesso:
+        if not edicao_inicial:
+            await update.message.reply_text(
+                "Ainda não há um resumo disponível. A primeira edição será enviada assim que o processamento terminar.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+
+        for chunk in split_long_message(edicao_inicial.resumo):
+            await update.message.reply_text(
+                chunk,
+                parse_mode=ParseMode.MARKDOWN,
+                disable_web_page_preview=True
+            )
+        await update.message.reply_text(
+            f"📥 **Download do PDF Original:** [Diário nº {edicao_inicial.numero} ({edicao_inicial.data_publicacao})]({edicao_inicial.url_download})",
+            parse_mode=ParseMode.MARKDOWN
+        )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

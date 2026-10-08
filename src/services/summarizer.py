@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from typing import Optional
+import httpx
 from src.config import settings
 from src.services.pdf_processor import PDFDocumentData
 
@@ -57,6 +58,8 @@ class DiarioSummarizer:
     def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
         self.api_key = api_key or settings.GEMINI_API_KEY
         self.model_name = model_name or settings.GEMINI_MODEL
+        self.openai_api_key = settings.OPENAI_API_KEY
+        self.openai_model = settings.OPENAI_MODEL
         self._client = None
         self._init_client()
 
@@ -87,42 +90,65 @@ class DiarioSummarizer:
         """
         Gera um resumo completo do diário oficial utilizando o Gemini ou fallback heurístico.
         """
-        if not self._client or not self.api_key:
-            return self._generate_fallback_summary(doc_data, numero_edicao, data_edicao)
-
-        logger.info(f"Enviando texto do Diário nº {numero_edicao} ({doc_data.total_paginas} páginas) para IA...")
-
-        # O modelo Gemini Flash possui janela de contexto de mais de 1 milhão de tokens,
-        # portanto podemos enviar o texto completo da edição sem preocupações com limites de corte.
         prompt = PROMPT_SUMARIO_DIARIO.format(
             texto_diario=doc_data.texto_completo[:300000]  # Limite de segurança de 300k caracteres
         )
 
-        try:
-            if self._use_new_sdk:
-                response = await asyncio.to_thread(
-                    self._client.models.generate_content,
-                    model=self.model_name,
-                    contents=prompt,
-                )
-                resumo = response.text
-            else:
-                response = await asyncio.to_thread(
-                    self._client.generate_content,
-                    prompt
-                )
-                resumo = response.text
+        if self._client and self.api_key:
+            try:
+                if self._use_new_sdk:
+                    response = await asyncio.to_thread(
+                        self._client.models.generate_content,
+                        model=self.model_name,
+                        contents=prompt,
+                    )
+                    resumo = response.text
+                else:
+                    response = await asyncio.to_thread(self._client.generate_content, prompt)
+                    resumo = response.text
 
-            if resumo and len(resumo.strip()) > 50:
-                logger.info("Resumo gerado com sucesso pelo Gemini!")
-                return resumo.strip()
-            else:
-                logger.warning("Resposta da IA vazia ou muito curta. Utilizando fallback.")
-                return self._generate_fallback_summary(doc_data, numero_edicao, data_edicao)
+                if resumo and len(resumo.strip()) > 50:
+                    logger.info("Resumo gerado com sucesso pelo Gemini!")
+                    return resumo.strip()
+                logger.warning("Gemini retornou uma resposta vazia ou muito curta.")
+            except Exception as e:
+                logger.error(f"Falha no Gemini; tentando OpenAI: {e}", exc_info=True)
+        else:
+            logger.warning("Gemini indisponível: chave ausente ou cliente não inicializado.")
 
-        except Exception as e:
-            logger.error(f"Falha ao chamar API do Gemini para resumo: {e}", exc_info=True)
-            return self._generate_fallback_summary(doc_data, numero_edicao, data_edicao)
+        if self.openai_api_key:
+            try:
+                resumo = await self._generate_openai_summary(prompt)
+                if resumo and len(resumo.strip()) > 50:
+                    logger.info("Resumo gerado com sucesso pela OpenAI.")
+                    return resumo.strip()
+                logger.warning("OpenAI retornou uma resposta vazia ou muito curta.")
+            except Exception as e:
+                logger.error(f"Falha na OpenAI; utilizando fallback heurístico: {e}", exc_info=True)
+        else:
+            logger.warning("OPENAI_API_KEY não configurada; utilizando fallback heurístico.")
+
+        return self._generate_fallback_summary(doc_data, numero_edicao, data_edicao)
+
+    async def _generate_openai_summary(self, prompt: str) -> str:
+        response = await asyncio.to_thread(
+            httpx.post,
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.openai_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.openai_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+                "max_tokens": 4000,
+            },
+            timeout=120.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
 
     def _generate_fallback_summary(self, doc_data: PDFDocumentData, numero_edicao: str, data_edicao: str) -> str:
         """Gera um resumo estruturado baseado em extração de tópicos caso a IA não esteja disponível."""
@@ -176,5 +202,4 @@ class DiarioSummarizer:
         if not (leis or decretos or portarias or atas):
             resumo.append("\nℹ️ Edição processada com sucesso. Consulte o arquivo PDF original para leitura detalhada.")
 
-        resumo.append("\n💡 *(Configure a variável GEMINI_API_KEY no .env para ativar a análise inteligente detalhada com IA)*")
         return "\n".join(resumo)
