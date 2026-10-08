@@ -20,6 +20,10 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: "gemini-2.5-flash"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: "gpt-4o-mini"
       - key: DEFAULT_WATCH_NAMES
         sync: false
       - key: CHECK_INTERVAL_MINUTES
@@ -29,4 +33,4 @@ services:
       - key: DATA_DIR
         value: "/app/data"
       - key: DATABASE_URL
-        value: "sqlite:////app/data/diario_aleto.db"
+        sync: false
