@@ -4,6 +4,7 @@ services:
     runtime: docker
     plan: free
     region: oregon
+    branch: prod
     autoDeploy: true
     envVars:
       - key: PORT
@@ -15,11 +16,7 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
-        value: "gemini-3.8-flash"
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: OPENAI_MODEL
-        value: "gpt-4o-mini"
+        value: "gemini-3.5-flash"
       - key: DEFAULT_WATCH_NAMES
         sync: false
       - key: CHECK_INTERVAL_MINUTES

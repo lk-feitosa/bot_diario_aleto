@@ -55,16 +55,27 @@ async def run_daily_check_pipeline(
 
     for item in reversed(itens):  # Processa em ordem cronológica (mais antigo para o mais novo)
         with get_db() as db:
-            total_banco = db.query(Edicao).count()
             existente = db.query(Edicao).filter(Edicao.url_download == item.url_download).first()
-            if existente and not force_current:
-                logger.info(f"⏭️ Edição já processada (cache local/banco encontrado): {item.url_download}")
+            
+            # Verifica se o resumo existente no banco é um resumo bom de IA ou se é um fallback/vazio
+            existente_tem_resumo_bom = (
+                existente is not None and 
+                bool(existente.resumo) and 
+                "modo de emergência" not in existente.resumo and 
+                "ATOS E MATÉRIAS IDENTIFICADOS NA EDIÇÃO" not in existente.resumo
+            )
+
+            if existente and existente_tem_resumo_bom and not force_current:
+                logger.info(f"⏭️ Edição nº {item.numero} já possui resumo de IA válido no banco: {item.url_download}")
                 continue
 
             if existente:
-                logger.info(f"🔁 Regenerando resumo da edição nº {item.numero} por solicitação manual.")
+                if existente_tem_resumo_bom:
+                    logger.info(f"🔁 Re-verificando edição nº {item.numero} por solicitação manual.")
+                else:
+                    logger.info(f"🔄 Tentando atualizar resumo em fallback da edição nº {item.numero} com IA.")
 
-            logger.info(f"✨ Nova edição detectada! Diário nº {item.numero} ({item.data}) - {item.url_download}")
+            logger.info(f"✨ Processando diário nº {item.numero} ({item.data}) - {item.url_download}")
 
             # 1. Download do PDF
             nome_arquivo = f"diario_{item.numero}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.pdf"
@@ -99,7 +110,7 @@ async def run_daily_check_pipeline(
             # Executa a engine de busca
             matches: List[AlertMatch] = AlertEngine.search_terms(doc_data, lista_termos_busca)
 
-            # Ao regenerar, não duplica alertas já registrados para a edição.
+            # Ao reprocessar edição já existente, não duplica alertas já registrados.
             if existente:
                 matches = []
 
@@ -110,11 +121,21 @@ async def run_daily_check_pipeline(
                 data_edicao=item.data
             )
 
+            resumo_novo_e_fallback = (
+                "modo de emergência" in resumo_ia or 
+                "ATOS E MATÉRIAS IDENTIFICADOS NA EDIÇÃO" in resumo_ia
+            )
+
             # 5. Salva a Edição no Banco
             if existente:
                 nova_edicao = existente
-                nova_edicao.resumo = resumo_ia
-                nova_edicao.pdf_path = None
+                if resumo_novo_e_fallback and existente_tem_resumo_bom:
+                    logger.warning(
+                        f"⚠️ Novo resumo gerado para edição nº {item.numero} caiu em fallback. "
+                        f"Preservando resumo de IA original que já estava salvo no banco!"
+                    )
+                else:
+                    nova_edicao.resumo = resumo_ia
                 nova_edicao.processado_em = datetime.utcnow()
             else:
                 nova_edicao = Edicao(
