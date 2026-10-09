@@ -18,9 +18,7 @@ class Settings(BaseSettings):
 
     # Gemini AI
     GEMINI_API_KEY: str = Field(default="", description="Chave de API do Google Gemini")
-    GEMINI_MODEL: str = Field(default="gemini-3.8-flash", description="Modelo do Gemini")
-    OPENAI_API_KEY: str = Field(default="", description="Chave de API da OpenAI")
-    OPENAI_MODEL: str = Field(default="gpt-4o-mini", description="Modelo da OpenAI")
+    GEMINI_MODEL: str = Field(default="gemini-3.5-flash", description="Modelo do Gemini")
 
     # Monitoramento
     DEFAULT_WATCH_NAMES: str = Field(
