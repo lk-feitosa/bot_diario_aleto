@@ -11,7 +11,7 @@ from rich.logging import RichHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.config import settings
-from src.database.session import init_db
+from src.database.session import init_db, seed_default_watch_names
 from src.bot.bot import create_bot_app
 from src.scheduler.job import run_daily_check_pipeline
 
@@ -79,6 +79,7 @@ async def main() -> None:
 
     # 1. Inicializa o banco de dados e diretórios
     init_db()
+    seed_default_watch_names()
     banco = "PostgreSQL" if settings.DATABASE_URL.startswith(("postgres://", "postgresql://")) else "SQLite"
     logger.info(f"📦 Banco de dados {banco} inicializado com sucesso.")
 
@@ -100,27 +101,11 @@ async def main() -> None:
     logger.info(f"⏰ Agendador iniciado: checagens a cada {settings.CHECK_INTERVAL_MINUTES} minutos "
                 f"(Timezone: {settings.TIMEZONE}).")
 
-    # 4. Dispara uma checagem inicial assíncrona após a inicialização
-    asyncio.create_task(run_daily_check_pipeline(app))
-
-    # 5. Verifica se o bot está configurado corretamente antes de iniciar polling
+    # 4. Verifica se o bot está configurado corretamente antes de iniciar polling
     token = settings.TELEGRAM_BOT_TOKEN or ""
-    if not token:
+    if not token or not app:
         logger.warning("⚠️ Bot não configurado (TELEGRAM_BOT_TOKEN não informado). Rodando em MODO PASSIVO (sem polling do Telegram).")
-        # Mantém processo vivo para o agendador
-        while True:
-            await asyncio.sleep(3600)
-        return
-
-    # Validação preventiva: verificar se o bot existe e responde
-    # Isso garante que não tentamos inicializar com um token inválido
-    # e evitamos exposição do token completo em logs
-    try:
-        bot = await app.bot.initialize()
-        logger.info("✅ Bot Telegram inicializado com sucesso. Iniciando polling...")
-    except Exception as e_token:
-        logger.warning(f"⚠️ Token Telegram inválido ou bot inalcançável: {e_token}")
-        logger.warning("Verifique se TELEGRAM_BOT_TOKEN no arquivo .env (ou Render Config) está correto.")
+        asyncio.create_task(run_daily_check_pipeline(app))
         # Mantém processo vivo para o agendador
         while True:
             await asyncio.sleep(3600)
@@ -128,44 +113,55 @@ async def main() -> None:
 
     logger.info("🤖 Iniciando polling interativo do bot no Telegram...")
 
-    async with app:
-        await app.start()
-        
-        # Forçar atualização do menu de comandos no Telegram
-        from telegram import BotCommand
-        try:
-            await app.bot.set_my_commands([
-                BotCommand("start", "Inicia e cadastra para receber resumos"),
-                BotCommand("ultimo", "Exibe o resumo da última publicação"),
-                BotCommand("monitorar", "Adiciona nome/termo para alerta"),
-                BotCommand("listar", "Lista seus termos em monitoramento"),
-                BotCommand("remover", "Remove um nome da sua lista"),
-                BotCommand("status", "Exibe o status da aplicação"),
-                BotCommand("verificar", "Força varredura manual no portal"),
-                BotCommand("ajuda", "Exibe a mensagem de ajuda do bot"),
-            ])
-            logger.info("✅ Menu de comandos atualizado no Telegram!")
-        except Exception as e:
-            logger.error(f"Não foi possível atualizar o menu de comandos: {e}")
+    try:
+        async with app:
+            await app.start()
+            logger.info("✅ Bot Telegram inicializado com sucesso.")
 
-        await app.updater.start_polling()
-
-        stop_event = asyncio.Event()
-
-        def signal_handler():
-            logger.info("🛑 Sinal de encerramento recebido...")
-            stop_event.set()
-
-        for sig in (signal.SIGINT, signal.SIGTERM):
+            # Forçar atualização do menu de comandos no Telegram
+            from telegram import BotCommand
             try:
-                asyncio.get_event_loop().add_signal_handler(sig, signal_handler)
-            except NotImplementedError:
-                pass
+                await app.bot.set_my_commands([
+                    BotCommand("start", "Inicia e cadastra para receber resumos"),
+                    BotCommand("ultimo", "Exibe o resumo da última publicação"),
+                    BotCommand("monitorar", "Adiciona nome/termo para alerta"),
+                    BotCommand("listar", "Lista seus termos em monitoramento"),
+                    BotCommand("remover", "Remove um nome da sua lista"),
+                    BotCommand("status", "Exibe o status da aplicação"),
+                    BotCommand("verificar", "Força varredura manual no portal"),
+                    BotCommand("ajuda", "Exibe a mensagem de ajuda do bot"),
+                ])
+                logger.info("✅ Menu de comandos atualizado no Telegram!")
+            except Exception as e:
+                logger.error(f"Não foi possível atualizar o menu de comandos: {e}")
 
-        await stop_event.wait()
-        logger.info("Encerrando bot do Telegram e agendador...")
-        await app.updater.stop()
-        await app.stop()
+            # 5. Dispara uma checagem inicial assíncrona após o bot estar inicializado
+            asyncio.create_task(run_daily_check_pipeline(app))
+
+            await app.updater.start_polling()
+
+            stop_event = asyncio.Event()
+
+            def signal_handler():
+                logger.info("🛑 Sinal de encerramento recebido...")
+                stop_event.set()
+
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                try:
+                    asyncio.get_event_loop().add_signal_handler(sig, signal_handler)
+                except NotImplementedError:
+                    pass
+
+            await stop_event.wait()
+            logger.info("Encerrando bot do Telegram e agendador...")
+            await app.updater.stop()
+            await app.stop()
+    except Exception as e_token:
+        logger.warning(f"⚠️ Token Telegram inválido ou bot inalcançável: {e_token}")
+        logger.warning("Verifique se TELEGRAM_BOT_TOKEN no arquivo .env (ou Render Config) está correto.")
+        asyncio.create_task(run_daily_check_pipeline(None))
+        while True:
+            await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     try:

@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from telegram import Bot
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes
 
 from src.config import settings
@@ -51,6 +52,32 @@ def create_bot_app() -> Optional[Application]:
     return app
 
 
+async def send_markdown_safe(
+    bot: Bot,
+    chat_id: int,
+    text: str,
+    disable_web_page_preview: bool = True,
+) -> None:
+    """Envia mensagem com ParseMode.MARKDOWN e faz fallback para texto puro se houver erro de formatação."""
+    try:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=ParseMode.MARKDOWN,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+    except BadRequest as e:
+        if "parse" in str(e).lower() or "entities" in str(e).lower():
+            logger.warning(f"Falha ao interpretar Markdown para chat_id={chat_id}; enviando como texto puro: {e}")
+            await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+        else:
+            raise
+
+
 async def send_alert_to_user(bot: Bot, chat_id: int, match: AlertMatch, edicao: Edicao) -> None:
     """Envia mensagem de alerta prioritário para um usuário específico."""
     texto_alerta = format_alert_message(
@@ -60,11 +87,11 @@ async def send_alert_to_user(bot: Bot, chat_id: int, match: AlertMatch, edicao: 
         url_download=edicao.url_download
     )
     try:
-        await bot.send_message(
+        await send_markdown_safe(
+            bot=bot,
             chat_id=chat_id,
             text=texto_alerta,
-            parse_mode=ParseMode.MARKDOWN,
-            disable_web_page_preview=True
+            disable_web_page_preview=True,
         )
         logger.info(f"🚨 Alerta enviado com sucesso para o chat_id={chat_id} (Termo: {match.termo})")
     except Exception as e:
@@ -92,17 +119,18 @@ async def broadcast_edition_summary(bot: Bot, edicao: Edicao) -> None:
     for chat_id in set(chat_ids):
         try:
             for chunk in chunks:
-                await bot.send_message(
+                await send_markdown_safe(
+                    bot=bot,
                     chat_id=chat_id,
                     text=chunk,
-                    parse_mode=ParseMode.MARKDOWN,
-                    disable_web_page_preview=True
+                    disable_web_page_preview=True,
                 )
             # Mensagem final com link de download
-            await bot.send_message(
+            await send_markdown_safe(
+                bot=bot,
                 chat_id=chat_id,
                 text=pdf_info,
-                parse_mode=ParseMode.MARKDOWN
+                disable_web_page_preview=False,
             )
             logger.info(f"Resumo da edição nº {edicao.numero} entregue para chat_id={chat_id}")
 

@@ -171,8 +171,8 @@ async def run_daily_check_pipeline(
             db.commit()
             novas_edicoes_count += 1
 
-            # 7. Broadcast do Resumo Geral para Todos os Usuários
-            if app and app.bot:
+            # 7. Broadcast do Resumo Geral para Todos os Usuários (apenas para edições novas)
+            if not existente and app and app.bot:
                 await broadcast_edition_summary(app.bot, nova_edicao)
 
     logger.info(

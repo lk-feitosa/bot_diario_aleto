@@ -38,160 +38,122 @@ class AletoScraper:
             "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
         }
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True)
-    async def fetch_latest_edicoes(self, limit: int = 10) -> List[DiarioItem]:
-        """
-        Busca as edições mais recentes publicadas no portal da ALETO.
-        """
-        urls = list(dict.fromkeys([
-            self.diario_url,
-            "https://al.to.leg.br/rss",
-            "https://al.to.leg.br/feed",
-            "https://al.to.leg.br/rss.xml",
-            "https://www.al.to.leg.br/diario",
-            "https://al.to.leg.br/diario",
-        ]))
-        response = None
-        async with httpx.AsyncClient(headers=self.headers, follow_redirects=True, timeout=30.0, verify=False) as client:
-            for url in urls:
+    @staticmethod
+    def _parse_rss_items(content: bytes, response_url: str, limit: int) -> List[DiarioItem]:
+        """Extrai edições de um feed RSS/Atom XML."""
+        items: List[DiarioItem] = []
+        seen_urls = set()
+        try:
+            xml_root = ElementTree.fromstring(content)
+        except ElementTree.ParseError:
+            return items
+
+        xml_items = xml_root.findall(".//item")
+        if not xml_items:
+            xml_items = xml_root.findall(".//{*}entry")
+
+        for xml_item in xml_items:
+            title_node = xml_item.find("{*}title")
+            if title_node is None:
+                title_node = xml_item.find("title")
+            titulo = (title_node.text or "").strip() if title_node is not None else ""
+
+            link = ""
+            link_node = xml_item.find("{*}link")
+            if link_node is None:
+                link_node = xml_item.find("link")
+            if link_node is not None:
+                link = link_node.text or link_node.attrib.get("href", "")
+
+            enclosure = xml_item.find("enclosure")
+            if enclosure is not None and enclosure.attrib.get("url"):
+                link = enclosure.attrib["url"]
+
+            if not link:
+                continue
+
+            url_download = urljoin(response_url, link.strip())
+            if url_download in seen_urls:
+                continue
+            seen_urls.add(url_download)
+
+            match_numero = re.search(r"Diário\s+n[ºo°]?\s*(\d+)", titulo, re.IGNORECASE)
+            numero = match_numero.group(1) if match_numero else "Desconhecido"
+
+            date_node = xml_item.find("{*}pubDate")
+            if date_node is None:
+                date_node = xml_item.find("pubDate")
+            if date_node is None:
+                date_node = xml_item.find("{*}updated")
+            data_str = ""
+            if date_node is not None and date_node.text:
                 try:
-                    logger.info(f"Buscando diários oficiais em: {url}")
-                    response = await client.get(url)
-                    response.raise_for_status()
-                    break
-                except Exception as e:
-                    logger.warning(f"Falha ao acessar {url}: {e}")
+                    published = parsedate_to_datetime(date_node.text.strip())
+                    data_str = published.strftime("%d/%m/%Y")
+                except (TypeError, ValueError, OverflowError):
+                    match_data = re.search(r"\b(\d{1,2}/\d{1,2}/\d{4})\b", date_node.text)
+                    data_str = match_data.group(1) if match_data else ""
 
-        if response is None:
-            raise RuntimeError("Não foi possível acessar nenhuma URL conhecida do portal da ALETO.")
+            description_node = xml_item.find("{*}description")
+            if description_node is None:
+                description_node = xml_item.find("description")
+            resumo_previa = (description_node.text or "").strip() if description_node is not None else ""
 
-        soup = BeautifulSoup(response.text, "html.parser")
+            items.append(DiarioItem(
+                numero=numero,
+                titulo=titulo,
+                data=data_str,
+                url_detalhe=url_download,
+                url_download=url_download,
+                resumo_previa=resumo_previa,
+            ))
+            if len(items) >= limit:
+                break
+
+        return items
+
+    @staticmethod
+    def _parse_html_items(soup: BeautifulSoup, response_url: str, limit: int) -> List[DiarioItem]:
+        """Extrai edições do HTML da página de diários, ignorando links de navegação."""
         items: List[DiarioItem] = []
         seen_urls = set()
 
-        # Descobre o endereço do RSS anunciado pelo HTML da página.
-        feed_links = soup.find_all("link", rel=lambda value: value and "alternate" in value)
-        if feed_links:
-            async with httpx.AsyncClient(headers=self.headers, follow_redirects=True, timeout=30.0, verify=False) as client:
-                for feed_link in feed_links:
-                    feed_url = urljoin(str(response.url), feed_link.get("href", "").strip())
-                    if not feed_url:
-                        continue
-                    try:
-                        feed_response = await client.get(feed_url)
-                        feed_response.raise_for_status()
-                        if feed_response.headers.get("content-type", "").lower().find("xml") >= 0 or feed_response.text.lstrip().startswith(("<?xml", "<rss", "<feed")):
-                            response = feed_response
-                            break
-                    except Exception as e:
-                        logger.warning(f"Falha ao acessar feed RSS {feed_url}: {e}")
-
-        # RSS/Atom: a URL fornecida pode responder diretamente com XML.
-        try:
-            xml_root = ElementTree.fromstring(response.content)
-            xml_items = xml_root.findall(".//item")
-            if not xml_items:
-                xml_items = xml_root.findall(".//{*}entry")
-
-            for xml_item in xml_items:
-                title_node = xml_item.find("{*}title")
-                if title_node is None:
-                    title_node = xml_item.find("title")
-                titulo = (title_node.text or "").strip() if title_node is not None else ""
-
-                link = ""
-                link_node = xml_item.find("{*}link")
-                if link_node is None:
-                    link_node = xml_item.find("link")
-                if link_node is not None:
-                    link = link_node.text or link_node.attrib.get("href", "")
-
-                enclosure = xml_item.find("enclosure")
-                if enclosure is not None and enclosure.attrib.get("url"):
-                    link = enclosure.attrib["url"]
-
-                if not link:
-                    continue
-
-                url_download = urljoin(str(response.url), link.strip())
-                if url_download in seen_urls:
-                    continue
-                seen_urls.add(url_download)
-
-                match_numero = re.search(r"Diário\s+n[ºo°]?\s*(\d+)", titulo, re.IGNORECASE)
-                numero = match_numero.group(1) if match_numero else "Desconhecido"
-
-                date_node = xml_item.find("{*}pubDate")
-                if date_node is None:
-                    date_node = xml_item.find("pubDate")
-                if date_node is None:
-                    date_node = xml_item.find("{*}updated")
-                data_str = ""
-                if date_node is not None and date_node.text:
-                    try:
-                        published = parsedate_to_datetime(date_node.text.strip())
-                        data_str = published.strftime("%d/%m/%Y")
-                    except (TypeError, ValueError, OverflowError):
-                        match_data = re.search(r"\b(\d{1,2}/\d{1,2}/\d{4})\b", date_node.text)
-                        data_str = match_data.group(1) if match_data else ""
-
-                description_node = xml_item.find("{*}description")
-                if description_node is None:
-                    description_node = xml_item.find("description")
-                resumo_previa = (description_node.text or "").strip() if description_node is not None else ""
-
-                items.append(DiarioItem(
-                    numero=numero,
-                    titulo=titulo,
-                    data=data_str,
-                    url_detalhe=url_download,
-                    url_download=url_download,
-                    resumo_previa=resumo_previa,
-                ))
-                if len(items) >= limit:
-                    break
-        except ElementTree.ParseError:
-            pass
-
-        if items:
-            logger.info(f"Encontradas {len(items)} edições no RSS da ALETO.")
-            return items
-
-        # Aceita tanto o layout atual (blocos .row) quanto layouts mais simples.
         rows = soup.find_all("div", class_="row")
         candidates = []
         for row in rows:
             for link_tag in row.find_all("a", href=True):
+                href = link_tag.get("href", "").strip()
                 titulo = link_tag.get_text(" ", strip=True)
-                context = " ".join(row.stripped_strings)
-                if re.search(r"diário|diario", f"{titulo} {context}", re.IGNORECASE):
+                # Ignora links de navegação como /diario ou âncoras
+                if not href or href.startswith("#") or href.rstrip("/").endswith("/diario"):
+                    continue
+                if "/arquivo/" in href.lower() or re.search(r"\.(pdf)(?:$|[?#])", href, re.IGNORECASE):
                     candidates.append((row, link_tag, titulo))
 
         if not candidates:
             for link_tag in soup.find_all("a", href=True):
                 titulo = link_tag.get_text(" ", strip=True)
                 href = link_tag.get("href", "").strip()
-                if re.search(r"diário|diario", titulo, re.IGNORECASE) or re.search(r"\.(pdf)(?:$|[?#])", href, re.IGNORECASE):
+                if not href or href.startswith("#") or href.rstrip("/").endswith("/diario"):
+                    continue
+                if "/arquivo/" in href.lower() or re.search(r"\.(pdf)(?:$|[?#])", href, re.IGNORECASE):
                     candidates.append((link_tag.parent, link_tag, titulo))
 
         for row, link_tag, titulo in candidates:
             href = link_tag.get("href", "").strip()
-            url_download = urljoin(str(response.url), href)
+            url_download = urljoin(response_url, href)
             if url_download in seen_urls:
                 continue
             seen_urls.add(url_download)
 
-            # Extração do número do diário
             match_numero = re.search(r"Diário\s+n[ºo°]?\s*(\d+)", titulo, re.IGNORECASE)
             numero = match_numero.group(1) if match_numero else "Desconhecido"
 
-            # Extração da data
-            context = " ".join(row.stripped_strings)
+            context = " ".join(row.stripped_strings) if row else titulo
             match_data = re.search(r"\b(\d{1,2}/\d{1,2}/\d{4})\b", context)
             data_str = match_data.group(1) if match_data else ""
 
             if not data_str:
-                # Fallback: tentar extrair do título "de DD de MMMM de AAAA"
                 match_data_titulo = re.search(r"de\s+(\d{1,2}\s+de\s+[a-zA-ZçÇ]+\s+de\s+\d{4})", titulo, re.IGNORECASE)
                 if match_data_titulo:
                     meses = {
@@ -204,8 +166,7 @@ class AletoScraper:
                 else:
                     data_str = "Data não identificada"
 
-            # Prévia do texto
-            col_content = row.find_all("div", class_="col-12")
+            col_content = row.find_all("div", class_="col-12") if row else []
             resumo_previa = ""
             if len(col_content) > 1:
                 resumo_previa = col_content[1].get_text(" ", strip=True)
@@ -222,8 +183,66 @@ class AletoScraper:
             if len(items) >= limit:
                 break
 
-        logger.info(f"Encontradas {len(items)} edições no portal da ALETO.")
         return items
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True)
+    async def fetch_latest_edicoes(self, limit: int = 10) -> List[DiarioItem]:
+        """
+        Busca as edições mais recentes publicadas no portal da ALETO.
+        """
+        urls = list(dict.fromkeys([
+            self.diario_url,
+            "https://al.to.leg.br/rss/diario",
+            "https://www.al.to.leg.br/rss/diario",
+            "https://www.al.to.leg.br/diario",
+            "https://al.to.leg.br/diario",
+        ]))
+        any_response = False
+        async with httpx.AsyncClient(headers=self.headers, follow_redirects=True, timeout=30.0, verify=False) as client:
+            for url in urls:
+                try:
+                    logger.info(f"Buscando diários oficiais em: {url}")
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    any_response = True
+                except Exception as e:
+                    logger.warning(f"Falha ao acessar {url}: {e}")
+                    continue
+
+                # 1. Tenta interpretar diretamente como RSS/Atom XML
+                rss_items = self._parse_rss_items(response.content, str(response.url), limit)
+                if rss_items:
+                    logger.info(f"Encontradas {len(rss_items)} edições no RSS da ALETO ({url}).")
+                    return rss_items
+
+                # 2. Caso seja HTML, verifica links alternativos de RSS anunciados na página
+                soup = BeautifulSoup(response.text, "html.parser")
+                feed_links = soup.find_all("link", rel=lambda value: value and "alternate" in value)
+                for feed_link in feed_links:
+                    feed_url = urljoin(str(response.url), feed_link.get("href", "").strip())
+                    if not feed_url:
+                        continue
+                    try:
+                        feed_response = await client.get(feed_url)
+                        feed_response.raise_for_status()
+                        rss_items = self._parse_rss_items(feed_response.content, str(feed_response.url), limit)
+                        if rss_items:
+                            logger.info(f"Encontradas {len(rss_items)} edições no RSS da ALETO ({feed_url}).")
+                            return rss_items
+                    except Exception as e:
+                        logger.warning(f"Falha ao acessar feed RSS {feed_url}: {e}")
+
+                # 3. Fallback: tenta extrair links de PDF/arquivo do HTML
+                html_items = self._parse_html_items(soup, str(response.url), limit)
+                if html_items:
+                    logger.info(f"Encontradas {len(html_items)} edições no portal da ALETO ({url}).")
+                    return html_items
+
+        if not any_response:
+            raise RuntimeError("Não foi possível acessar nenhuma URL conhecida do portal da ALETO.")
+
+        logger.warning("Nenhuma edição encontrada nas URLs consultadas da ALETO.")
+        return []
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True)
     async def download_pdf(self, url: str, destino: Path) -> Path:

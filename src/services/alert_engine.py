@@ -96,15 +96,14 @@ class AlertEngine:
                 # Busca flexível por regex (palavras completas)
                 term_escaped = re.escape(norm_term)
                 pattern = rf"\b{term_escaped}\b"
-                
-                for m in re.finditer(pattern, norm_page_text):
-                    # Localiza a posição aproximada no texto original da página
-                    # Faz uma busca por correspondência de substrings no texto original
-                    orig_match = re.search(re.escape(term), page_text, re.IGNORECASE)
-                    if orig_match:
-                        start, end = orig_match.span()
+                orig_matches = list(re.finditer(re.escape(term), page_text, re.IGNORECASE))
+
+                for idx, m in enumerate(re.finditer(pattern, norm_page_text)):
+                    # Localiza a ocorrência correspondente no texto original da página
+                    if idx < len(orig_matches):
+                        start, end = orig_matches[idx].span()
                     else:
-                        # Fallback se caracteres diferirem por acentuação
+                        # Fallback se caracteres diferirem por acentuação/espaçamento
                         approx_ratio = len(page_text) / (len(norm_page_text) or 1)
                         start = int(m.start() * approx_ratio)
                         end = int(m.end() * approx_ratio)

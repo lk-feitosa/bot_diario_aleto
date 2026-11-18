@@ -3,6 +3,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from src.config import settings
@@ -11,6 +12,29 @@ from src.database.models import Usuario, TermoMonitorado, Edicao, InteracaoLog
 from src.bot.messages import format_welcome_message, split_long_message
 
 logger = logging.getLogger(__name__)
+
+
+async def _reply_markdown_safe(
+    update: Update,
+    text: str,
+    disable_web_page_preview: bool = True,
+) -> None:
+    """Responde com ParseMode.MARKDOWN e faz fallback para texto puro se houver erro de formatação."""
+    try:
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.MARKDOWN,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+    except BadRequest as e:
+        if "parse" in str(e).lower() or "entities" in str(e).lower():
+            logger.warning(f"Falha ao interpretar Markdown na resposta; enviando texto puro: {e}")
+            await update.message.reply_text(
+                text,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+        else:
+            raise
 
 
 def _registrar_interacao(db, chat_id: int, comando: str, parametros: str = None) -> None:
@@ -84,14 +108,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
         for chunk in split_long_message(edicao_inicial.resumo):
-            await update.message.reply_text(
-                chunk,
-                parse_mode=ParseMode.MARKDOWN,
-                disable_web_page_preview=True
-            )
-        await update.message.reply_text(
+            await _reply_markdown_safe(update, chunk, disable_web_page_preview=True)
+        await _reply_markdown_safe(
+            update,
             f"📥 **Download do PDF Original:** [Diário nº {edicao_inicial.numero} ({edicao_inicial.data_publicacao})]({edicao_inicial.url_download})",
-            parse_mode=ParseMode.MARKDOWN
+            disable_web_page_preview=False,
         )
 
 
@@ -125,11 +146,12 @@ async def ultimo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     chunks = split_long_message(resumo_texto)
 
     for i, chunk in enumerate(chunks):
-        await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+        await _reply_markdown_safe(update, chunk, disable_web_page_preview=True)
 
-    await update.message.reply_text(
+    await _reply_markdown_safe(
+        update,
         f"📥 **Download do PDF Original:** [Diário nº {edicao.numero} ({edicao.data_publicacao})]({edicao.url_download})",
-        parse_mode=ParseMode.MARKDOWN
+        disable_web_page_preview=False,
     )
 
 

@@ -4,7 +4,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
 
 from src.config import settings
-from src.database.models import Base
+from src.database.models import Base, TermoMonitorado
 
 logger = logging.getLogger(__name__)
 
@@ -45,3 +45,24 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def seed_default_watch_names() -> None:
+    """Garante que os termos de DEFAULT_WATCH_NAMES existam como termos globais ativos."""
+    watch_names = settings.get_watch_names_list()
+    if not watch_names:
+        return
+
+    with get_db() as db:
+        adicionados = 0
+        for nome in watch_names:
+            existente = db.query(TermoMonitorado).filter(
+                TermoMonitorado.usuario_id.is_(None),
+                TermoMonitorado.termo.ilike(nome),
+            ).first()
+            if not existente:
+                db.add(TermoMonitorado(usuario_id=None, termo=nome, ativo=True))
+                adicionados += 1
+        if adicionados:
+            db.commit()
+            logger.info(f"🔍 {adicionados} termo(s) global(is) de DEFAULT_WATCH_NAMES sincronizado(s).")
