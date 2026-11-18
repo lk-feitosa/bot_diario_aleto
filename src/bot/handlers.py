@@ -311,9 +311,9 @@ async def verificar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     with get_db() as db:
         _registrar_interacao(db, chat_id, "/verificar")
 
-    await update.message.reply_text("🔄 **Iniciando verificação manual no portal da ALETO...**\nAguarde alguns instantes.")
+    await update.message.reply_text("🔄 **Consultando o RSS e o portal da ALETO...**\nAguarde alguns instantes.")
     try:
-        resultado = await run_daily_check_pipeline(context.application, force_current=True)
+        resultado = await run_daily_check_pipeline(context.application, force_current=False)
         if resultado.get("novas_edicoes", 0) > 0:
             await update.message.reply_text(f"✅ Verificação finalizada! {resultado['novas_edicoes']} nova(s) edição(ões) processada(s).")
         else:
