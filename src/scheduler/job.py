@@ -35,6 +35,7 @@ async def run_daily_check_pipeline(
     summarizer = DiarioSummarizer()
     novas_edicoes_count = 0
     total_alertas_count = 0
+    broadcasted = False
 
     try:
         itens = await scraper.fetch_latest_edicoes(limit=5)
@@ -174,6 +175,7 @@ async def run_daily_check_pipeline(
             # 7. Broadcast do Resumo Geral para Todos os Usuários (apenas para edições novas)
             if not existente and app and app.bot:
                 await broadcast_edition_summary(app.bot, nova_edicao)
+                broadcasted = True
 
     logger.info(
         f"🏁 [SCHEDULER] Ciclo concluído: {novas_edicoes_count} novas edições processadas, "
@@ -182,5 +184,6 @@ async def run_daily_check_pipeline(
     return {
         "sucesso": True,
         "novas_edicoes": novas_edicoes_count,
-        "alertas_emitidos": total_alertas_count
+        "alertas_emitidos": total_alertas_count,
+        "broadcasted": broadcasted,
     }

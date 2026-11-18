@@ -313,16 +313,21 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if ultima_edicao else "Nenhuma ainda"
     )
 
+    gemini_status = f"Ativo ({settings.GEMINI_MODEL})" if settings.GEMINI_API_KEY else "Não configurado"
+    openai_status = f"Ativo ({settings.OPENAI_MODEL})" if settings.OPENAI_API_KEY else "Não configurado"
+
     msg = (
-        f"📊 **STATUS DO BOT DO DIÁRIO OFICIAL ALETO**\n\n"
-        f"🟢 **Status:** Operacional e Monitorando\n"
-        f"📰 **Total de Edições Catalogadas:** {total_edicoes}\n"
-        f"📅 **Última Edição Processada:** {ultima_info}\n"
-        f"👥 **Usuários Ativos:** {total_usuarios}\n"
-        f"🔍 **Termos Monitorados:** {total_termos}\n"
-        f"🕒 **Hora do Servidor:** {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+        f"📊 *STATUS DO BOT DO DIÁRIO OFICIAL ALETO*\n\n"
+        f"🟢 *Status:* Operacional e Monitorando\n"
+        f"📰 *Total de Edições Catalogadas:* {total_edicoes}\n"
+        f"📅 *Última Edição Processada:* {ultima_info}\n"
+        f"👥 *Usuários Ativos:* {total_usuarios}\n"
+        f"🔍 *Termos Monitorados:* {total_termos}\n"
+        f"🧠 *Gemini:* {gemini_status}\n"
+        f"🤖 *OpenAI (fallback):* {openai_status}\n"
+        f"🕒 *Hora do Servidor:* {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
     )
-    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+    await _reply_markdown_safe(update.message, msg)
 
 
 async def verificar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -333,14 +338,32 @@ async def verificar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     with get_db() as db:
         _registrar_interacao(db, chat_id, "/verificar")
 
-    await update.message.reply_text("🔄 **Iniciando verificação manual no portal da ALETO...**\nAguarde alguns instantes.")
+    await _reply_markdown_safe(
+        update.message,
+        "🔄 *Iniciando verificação manual no portal da ALETO...*\nAguarde alguns instantes.",
+    )
     try:
         resultado = await run_daily_check_pipeline(context.application, force_current=True)
         if resultado.get("novas_edicoes", 0) > 0:
-            await update.message.reply_text(f"✅ Verificação finalizada! {resultado['novas_edicoes']} nova(s) edição(ões) processada(s).")
+            await update.message.reply_text(
+                f"✅ Verificação finalizada! {resultado['novas_edicoes']} edição(ões) processada(s)."
+            )
+            if not resultado.get("broadcasted", False):
+                with get_db() as db:
+                    edicao = db.query(Edicao).order_by(Edicao.id.desc()).first()
+                if edicao:
+                    resumo_texto = edicao.resumo or "Resumo não disponível para esta edição."
+                    for chunk in split_long_message(resumo_texto):
+                        await _reply_markdown_safe(
+                            update.message, chunk, disable_web_page_preview=True
+                        )
+                    await _reply_markdown_safe(
+                        update.message,
+                        f"📥 *Download do PDF Original:* [Diário nº {edicao.numero} ({edicao.data_publicacao})]({edicao.url_download})",
+                    )
         else:
             await update.message.reply_text("✅ Verificação finalizada! Nenhuma nova edição encontrada no momento.")
     except Exception as e:
         logger.error(f"Erro na verificação manual: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Ocorreu um erro durante a verificação: `{e}`", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(f"❌ Ocorreu um erro durante a verificação: {e}")
 
