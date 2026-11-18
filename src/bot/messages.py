@@ -21,7 +21,7 @@ def format_welcome_message(first_name: Optional[str] = None) -> str:
     nome = f", {first_name}" if first_name else ""
     return (
         f"👋 **Olá{nome}! Seja bem-vindo ao Bot do Diário Oficial da ALETO.**\n\n"
-        f"🤖 Eu monitoro o portal da Assembleia Legislativa do Tocantins ([al.to.leg.br/diario](https://www.al.to.leg.br/diario)) "
+        f"🤖 Eu monitoro o portal da Assembleia Legislativa do Tocantins ([al.to.leg.br](https://al.to.leg.br/)) "
         f"todos os dias úteis para você.\n\n"
         f"✨ **O que eu faço:**\n"
         f"• 📥 Baixo as novas edições assim que são publicadas.\n"

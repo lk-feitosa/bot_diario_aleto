@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO", description="Nível de log")
 
     # URL Base da ALETO
-    ALETO_DIARIO_URL: str = "https://www.al.to.leg.br/diario"
-    ALETO_BASE_URL: str = "https://www.al.to.leg.br"
+    ALETO_DIARIO_URL: str = "https://al.to.leg.br/"
+    ALETO_BASE_URL: str = "https://al.to.leg.br"
 
     def get_watch_names_list(self) -> List[str]:
         if not self.DEFAULT_WATCH_NAMES:

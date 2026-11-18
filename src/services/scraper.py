@@ -3,7 +3,9 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin
+from xml.etree import ElementTree
 import httpx
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -43,6 +45,9 @@ class AletoScraper:
         """
         urls = list(dict.fromkeys([
             self.diario_url,
+            "https://al.to.leg.br/rss",
+            "https://al.to.leg.br/feed",
+            "https://al.to.leg.br/rss.xml",
             "https://www.al.to.leg.br/diario",
             "https://al.to.leg.br/diario",
         ]))
@@ -63,6 +68,94 @@ class AletoScraper:
         soup = BeautifulSoup(response.text, "html.parser")
         items: List[DiarioItem] = []
         seen_urls = set()
+
+        # Descobre o endereço do RSS anunciado pelo HTML da página.
+        feed_links = soup.find_all("link", rel=lambda value: value and "alternate" in value)
+        if feed_links:
+            async with httpx.AsyncClient(headers=self.headers, follow_redirects=True, timeout=30.0, verify=False) as client:
+                for feed_link in feed_links:
+                    feed_url = urljoin(str(response.url), feed_link.get("href", "").strip())
+                    if not feed_url:
+                        continue
+                    try:
+                        feed_response = await client.get(feed_url)
+                        feed_response.raise_for_status()
+                        if feed_response.headers.get("content-type", "").lower().find("xml") >= 0 or feed_response.text.lstrip().startswith(("<?xml", "<rss", "<feed")):
+                            response = feed_response
+                            break
+                    except Exception as e:
+                        logger.warning(f"Falha ao acessar feed RSS {feed_url}: {e}")
+
+        # RSS/Atom: a URL fornecida pode responder diretamente com XML.
+        try:
+            xml_root = ElementTree.fromstring(response.content)
+            xml_items = xml_root.findall(".//item")
+            if not xml_items:
+                xml_items = xml_root.findall(".//{*}entry")
+
+            for xml_item in xml_items:
+                title_node = xml_item.find("{*}title")
+                if title_node is None:
+                    title_node = xml_item.find("title")
+                titulo = (title_node.text or "").strip() if title_node is not None else ""
+
+                link = ""
+                link_node = xml_item.find("{*}link")
+                if link_node is None:
+                    link_node = xml_item.find("link")
+                if link_node is not None:
+                    link = link_node.text or link_node.attrib.get("href", "")
+
+                enclosure = xml_item.find("enclosure")
+                if enclosure is not None and enclosure.attrib.get("url"):
+                    link = enclosure.attrib["url"]
+
+                if not link:
+                    continue
+
+                url_download = urljoin(str(response.url), link.strip())
+                if url_download in seen_urls:
+                    continue
+                seen_urls.add(url_download)
+
+                match_numero = re.search(r"Diário\s+n[ºo°]?\s*(\d+)", titulo, re.IGNORECASE)
+                numero = match_numero.group(1) if match_numero else "Desconhecido"
+
+                date_node = xml_item.find("{*}pubDate")
+                if date_node is None:
+                    date_node = xml_item.find("pubDate")
+                if date_node is None:
+                    date_node = xml_item.find("{*}updated")
+                data_str = ""
+                if date_node is not None and date_node.text:
+                    try:
+                        published = parsedate_to_datetime(date_node.text.strip())
+                        data_str = published.strftime("%d/%m/%Y")
+                    except (TypeError, ValueError, OverflowError):
+                        match_data = re.search(r"\b(\d{1,2}/\d{1,2}/\d{4})\b", date_node.text)
+                        data_str = match_data.group(1) if match_data else ""
+
+                description_node = xml_item.find("{*}description")
+                if description_node is None:
+                    description_node = xml_item.find("description")
+                resumo_previa = (description_node.text or "").strip() if description_node is not None else ""
+
+                items.append(DiarioItem(
+                    numero=numero,
+                    titulo=titulo,
+                    data=data_str,
+                    url_detalhe=url_download,
+                    url_download=url_download,
+                    resumo_previa=resumo_previa,
+                ))
+                if len(items) >= limit:
+                    break
+        except ElementTree.ParseError:
+            pass
+
+        if items:
+            logger.info(f"Encontradas {len(items)} edições no RSS da ALETO.")
+            return items
 
         # Aceita tanto o layout atual (blocos .row) quanto layouts mais simples.
         rows = soup.find_all("div", class_="row")

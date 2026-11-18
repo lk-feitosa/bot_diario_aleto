@@ -1,6 +1,6 @@
 # 🤖 GhostWriter ALETO (@ghostwriter_lk_bot)
 
-Sistema autônomo que monitora diariamente as edições publicadas do Diário Oficial da **Assembleia Legislativa do Estado do Tocantins ([ALETO](https://www.al.to.leg.br/diario))**, processa os arquivos PDF com **PyMuPDF**, gera resumos completos e estruturados com inteligência artificial (**Google Gemini**) e dispara alertas prioritários imediatos caso seu nome ou termos de interesse sejam publicados.
+Sistema autônomo que monitora diariamente as edições publicadas do Diário Oficial da **Assembleia Legislativa do Estado do Tocantins ([ALETO](https://al.to.leg.br/))**, processa os arquivos PDF com **PyMuPDF**, gera resumos completos e estruturados com inteligência artificial (**Google Gemini**) e dispara alertas prioritários imediatos caso seu nome ou termos de interesse sejam publicados.
 
 ---
 
