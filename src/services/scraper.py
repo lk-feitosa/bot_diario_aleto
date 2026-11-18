@@ -45,6 +45,8 @@ class AletoScraper:
         Busca as edições mais recentes publicadas no portal da ALETO.
         """
         explicit_feed_urls = [
+            "https://al.to.leg.br/rss/diario",
+            "https://www.al.to.leg.br/rss/diario",
             "https://al.to.leg.br/rss",
             "https://al.to.leg.br/feed",
             "https://al.to.leg.br/rss.xml",
