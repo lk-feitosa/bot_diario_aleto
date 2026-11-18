@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 from dataclasses import dataclass
+from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -40,59 +41,75 @@ class AletoScraper:
         """
         Busca as edições mais recentes publicadas no portal da ALETO.
         """
-        logger.info(f"Buscando diários oficiais em: {self.diario_url}")
+        urls = list(dict.fromkeys([
+            self.diario_url,
+            "https://www.al.to.leg.br/diario",
+            "https://al.to.leg.br/diario",
+        ]))
+        response = None
         async with httpx.AsyncClient(headers=self.headers, follow_redirects=True, timeout=30.0, verify=False) as client:
-            response = await client.get(self.diario_url)
-            response.raise_for_status()
+            for url in urls:
+                try:
+                    logger.info(f"Buscando diários oficiais em: {url}")
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    break
+                except Exception as e:
+                    logger.warning(f"Falha ao acessar {url}: {e}")
+
+        if response is None:
+            raise RuntimeError("Não foi possível acessar nenhuma URL conhecida do portal da ALETO.")
 
         soup = BeautifulSoup(response.text, "html.parser")
         items: List[DiarioItem] = []
+        seen_urls = set()
 
-        # Localiza os blocos de diário na página
-        # O HTML da ALETO organiza cada diário dentro de divs row
+        # Aceita tanto o layout atual (blocos .row) quanto layouts mais simples.
         rows = soup.find_all("div", class_="row")
-        
+        candidates = []
         for row in rows:
-            h4 = row.find("h4")
-            if not h4:
-                continue
+            for link_tag in row.find_all("a", href=True):
+                titulo = link_tag.get_text(" ", strip=True)
+                context = " ".join(row.stripped_strings)
+                if re.search(r"diário|diario", f"{titulo} {context}", re.IGNORECASE):
+                    candidates.append((row, link_tag, titulo))
 
-            link_tag = h4.find("a")
-            if not link_tag:
-                continue
+        if not candidates:
+            for link_tag in soup.find_all("a", href=True):
+                titulo = link_tag.get_text(" ", strip=True)
+                href = link_tag.get("href", "").strip()
+                if re.search(r"diário|diario", titulo, re.IGNORECASE) or re.search(r"\.(pdf)(?:$|[?#])", href, re.IGNORECASE):
+                    candidates.append((link_tag.parent, link_tag, titulo))
 
-            titulo = link_tag.get_text(strip=True)
+        for row, link_tag, titulo in candidates:
             href = link_tag.get("href", "").strip()
-
-            if not href.startswith("http"):
-                url_download = f"{self.base_url}{href}"
-            else:
-                url_download = href
+            url_download = urljoin(str(response.url), href)
+            if url_download in seen_urls:
+                continue
+            seen_urls.add(url_download)
 
             # Extração do número do diário
             match_numero = re.search(r"Diário\s+n[ºo°]?\s*(\d+)", titulo, re.IGNORECASE)
             numero = match_numero.group(1) if match_numero else "Desconhecido"
 
             # Extração da data
-            data_tag = row.find("small", text=re.compile(r"Data:", re.IGNORECASE))
-            if not data_tag:
-                # Tenta buscar pelo texto geral dentro dos smalls
-                smalls = row.find_all("small")
-                data_str = ""
-                for s in smalls:
-                    if "Data:" in s.text:
-                        match_data = re.search(r"(\d{2}/\d{2}/\d{4})", s.text)
-                        if match_data:
-                            data_str = match_data.group(1)
-                            break
-            else:
-                match_data = re.search(r"(\d{2}/\d{2}/\d{4})", data_tag.get_text())
-                data_str = match_data.group(1) if match_data else ""
+            context = " ".join(row.stripped_strings)
+            match_data = re.search(r"\b(\d{1,2}/\d{1,2}/\d{4})\b", context)
+            data_str = match_data.group(1) if match_data else ""
 
             if not data_str:
                 # Fallback: tentar extrair do título "de DD de MMMM de AAAA"
                 match_data_titulo = re.search(r"de\s+(\d{1,2}\s+de\s+[a-zA-ZçÇ]+\s+de\s+\d{4})", titulo, re.IGNORECASE)
-                data_str = match_data_titulo.group(1) if match_data_titulo else "Data não identificada"
+                if match_data_titulo:
+                    meses = {
+                        "janeiro": "01", "fevereiro": "02", "março": "03", "abril": "04",
+                        "maio": "05", "junho": "06", "julho": "07", "agosto": "08",
+                        "setembro": "09", "outubro": "10", "novembro": "11", "dezembro": "12",
+                    }
+                    dia, _, mes, _, ano = match_data_titulo.group(1).lower().split()
+                    data_str = f"{int(dia):02d}/{meses.get(mes, '00')}/{ano}"
+                else:
+                    data_str = "Data não identificada"
 
             # Prévia do texto
             col_content = row.find_all("div", class_="col-12")

@@ -44,13 +44,13 @@ async def run_daily_check_pipeline(
 
     data_hoje = datetime.now(ZoneInfo(settings.TIMEZONE)).strftime("%d/%m/%Y")
     itens_do_dia = [item for item in itens if item.data == data_hoje]
-    itens = itens_do_dia or itens[:1]
+    itens = itens_do_dia or itens[:5]
     if not itens:
         logger.info("Nenhuma edição encontrada no portal para processar.")
         return {"sucesso": True, "novas_edicoes": 0, "alertas_emitidos": 0}
     if not itens_do_dia:
         logger.info(
-            f"Nenhuma edição publicada hoje ({data_hoje}); usando somente a edição mais recente disponível."
+            f"Nenhuma edição publicada hoje ({data_hoje}); verificando as edições mais recentes disponíveis."
         )
 
     for item in reversed(itens):  # Processa em ordem cronológica (mais antigo para o mais novo)
