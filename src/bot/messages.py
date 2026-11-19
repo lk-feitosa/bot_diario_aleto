@@ -1,4 +1,5 @@
 from typing import List, Optional
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.services.alert_engine import AlertMatch
 
 
@@ -17,8 +18,29 @@ def format_alert_message(match: AlertMatch, numero_edicao: str, data_edicao: str
     )
 
 
-def format_welcome_message(first_name: Optional[str] = None) -> str:
+def build_edition_keyboard(url_download: str) -> InlineKeyboardMarkup:
+    """Cria botões interativos para o rodapé dos resumos."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📥 Baixar PDF Original", url=url_download)],
+        [
+            InlineKeyboardButton("📚 Últimas Edições", callback_data="cmd:edicoes"),
+            InlineKeyboardButton("🔔 Notificações", callback_data="cmd:notificacoes"),
+        ],
+    ])
+
+
+def format_welcome_message(first_name: Optional[str] = None, is_admin: bool = False) -> str:
     nome = f", {first_name}" if first_name else ""
+    admin_section = ""
+    if is_admin:
+        admin_section = (
+            f"\n🔐 **Comandos de Administrador:**\n"
+            f"• `/verificar` ou `/verificar <nº>` - Forçar varredura e regenerar resumo com IA\n"
+            f"• `/status` - Consultar status do sistema, IA e banco de dados\n"
+            f"• `/usuarios` - Listar usuários cadastrados e interações\n"
+            f"• `/comunicado <texto>` - Enviar aviso para todos os usuários ativos\n"
+        )
+
     return (
         f"👋 **Olá{nome}! Seja bem-vindo ao Bot do Diário Oficial da ALETO.**\n\n"
         f"🤖 Eu monitoro o portal da Assembleia Legislativa do Tocantins ([al.to.leg.br](https://al.to.leg.br/)) "
@@ -28,15 +50,17 @@ def format_welcome_message(first_name: Optional[str] = None) -> str:
         f"• 🧠 Crio um **resumo completo e estruturado por IA** (RH, Projetos de Lei, Decretos, Licitações).\n"
         f"• 🚨 **Aviso imediatamente** se o seu nome ou termos monitorados forem publicados.\n\n"
         f"📌 **Comandos Disponíveis:**\n"
-        f"• `/ultimo` ou `/ultimo <nº>` - Visualizar o resumo da última edição (ou de uma edição específica)\n"
+        f"• `/ultimo` ou `/ultimo <nº>` - Visualizar o resumo da última edição (ou de uma específica)\n"
+        f"• `/edicoes` - Listar as últimas edições disponíveis no banco\n"
+        f"• `/buscar <termo>` - Pesquisar menções nas edições e alertas salvos\n"
         f"• `/monitorar <nome>` - Adicionar um nome para alerta imediato\n"
         f"• `/listar` - Listar seus nomes/termos em monitoramento\n"
         f"• `/remover <nome>` - Remover um nome da lista\n"
-        f"• `/verificar` ou `/verificar <nº>` - Forçar verificação e atualizar edições sem resumo IA\n"
-        f"• `/status` - Consultar status do monitoramento e banco de dados\n"
-        f"• `/ajuda` - Exibir esta mensagem de ajuda\n\n"
+        f"• `/notificacoes` - Alternar entre receber resumos diários ou somente alertas\n"
+        f"• `/ajuda` - Exibir esta mensagem de ajuda\n"
+        f"{admin_section}\n"
         f"🔒 **Aviso de Privacidade:**\n"
-        f"O bot só acessa o portal da ALETO público, não armazena seus dados além do seu ID de chat e dos termos de monitoramento. As chaves de acesso são gerenciadas de forma segura apenas na infraestrutura (ex: Render) pelo administrador."
+        f"O bot só acessa o portal da ALETO público e armazena apenas seu ID de chat, preferência de notificações e termos de monitoramento."
     )
 
 

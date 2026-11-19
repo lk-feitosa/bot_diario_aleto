@@ -35,6 +35,7 @@ class Usuario(Base):
     username: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     first_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    receber_resumos: Mapped[bool] = mapped_column(Boolean, default=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     ultimo_acesso: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     bloqueado_em: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

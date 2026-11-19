@@ -1,5 +1,5 @@
 import logging
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
 
@@ -38,9 +38,18 @@ engine = create_engine(db_url, **engine_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
-    """Cria as tabelas se não existirem."""
+    """Cria as tabelas se não existirem e aplica migrações leves de colunas."""
     try:
         Base.metadata.create_all(bind=engine)
+        inspector = inspect(engine)
+        if inspector.has_table("usuarios"):
+            cols = {c["name"] for c in inspector.get_columns("usuarios")}
+            if "receber_resumos" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("ALTER TABLE usuarios ADD COLUMN receber_resumos BOOLEAN DEFAULT TRUE")
+                    )
+                logger.info("🔄 Coluna 'receber_resumos' adicionada na tabela 'usuarios'.")
         logger.info("✅ Tabelas do banco de dados verificadas/criadas.")
     except Exception as e:
         logger.error(f"❌ Erro ao inicializar banco de dados: {e}")

@@ -119,18 +119,32 @@ async def main() -> None:
             logger.info("✅ Bot Telegram inicializado com sucesso.")
 
             # Forçar atualização do menu de comandos no Telegram
-            from telegram import BotCommand
+            from telegram import BotCommand, BotCommandScopeChat
             try:
-                await app.bot.set_my_commands([
+                user_commands = [
                     BotCommand("start", "Inicia e cadastra para receber resumos"),
-                    BotCommand("ultimo", "Exibe o resumo da última publicação"),
+                    BotCommand("ultimo", "Exibe o resumo da última edição (ou /ultimo <nº>)"),
+                    BotCommand("edicoes", "Lista as últimas edições catalogadas"),
+                    BotCommand("buscar", "Pesquisa um termo nos resumos e alertas"),
                     BotCommand("monitorar", "Adiciona nome/termo para alerta"),
                     BotCommand("listar", "Lista seus termos em monitoramento"),
                     BotCommand("remover", "Remove um nome da sua lista"),
-                    BotCommand("status", "Exibe o status da aplicação"),
-                    BotCommand("verificar", "Força varredura manual no portal"),
+                    BotCommand("notificacoes", "Alterna entre resumos diários ou só alertas"),
                     BotCommand("ajuda", "Exibe a mensagem de ajuda do bot"),
-                ])
+                ]
+                await app.bot.set_my_commands(user_commands)
+
+                if settings.TELEGRAM_ADMIN_CHAT_ID:
+                    admin_commands = user_commands + [
+                        BotCommand("verificar", "[Admin] Força varredura/regeneração por IA"),
+                        BotCommand("status", "[Admin] Exibe o status do sistema e IA"),
+                        BotCommand("usuarios", "[Admin] Lista usuários e interações"),
+                        BotCommand("comunicado", "[Admin] Envia comunicado aos usuários"),
+                    ]
+                    await app.bot.set_my_commands(
+                        admin_commands,
+                        scope=BotCommandScopeChat(chat_id=settings.TELEGRAM_ADMIN_CHAT_ID),
+                    )
                 logger.info("✅ Menu de comandos atualizado no Telegram!")
             except Exception as e:
                 logger.error(f"Não foi possível atualizar o menu de comandos: {e}")

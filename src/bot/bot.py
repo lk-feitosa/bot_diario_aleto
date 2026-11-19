@@ -5,22 +5,28 @@ from typing import List, Dict, Any, Optional
 from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
-from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import Application, ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
 from src.config import settings
 from src.database.models import Usuario, Edicao, EdicaoEnviada
 from src.database.session import get_db
 from src.services.alert_engine import AlertMatch
-from src.bot.messages import format_alert_message, split_long_message
+from src.bot.messages import format_alert_message, split_long_message, build_edition_keyboard
 from src.bot.handlers import (
     start_command,
     help_command,
     ultimo_command,
+    edicoes_command,
+    buscar_command,
     monitorar_command,
     listar_command,
     remover_command,
+    notificacoes_command,
     status_command,
     verificar_command,
+    usuarios_command,
+    comunicado_command,
+    button_callback_handler,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,11 +44,17 @@ def create_bot_app() -> Optional[Application]:
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler(["ajuda", "help"], help_command))
     app.add_handler(CommandHandler(["ultimo", "resumo"], ultimo_command))
+    app.add_handler(CommandHandler("edicoes", edicoes_command))
+    app.add_handler(CommandHandler("buscar", buscar_command))
     app.add_handler(CommandHandler("monitorar", monitorar_command))
     app.add_handler(CommandHandler("listar", listar_command))
     app.add_handler(CommandHandler("remover", remover_command))
+    app.add_handler(CommandHandler("notificacoes", notificacoes_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("verificar", verificar_command))
+    app.add_handler(CommandHandler("usuarios", usuarios_command))
+    app.add_handler(CommandHandler("comunicado", comunicado_command))
+    app.add_handler(CallbackQueryHandler(button_callback_handler))
 
     async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.error(f"⚠️ Erro capturado no Telegram Bot: {context.error}", exc_info=context.error)
@@ -57,6 +69,7 @@ async def send_markdown_safe(
     chat_id: int,
     text: str,
     disable_web_page_preview: bool = True,
+    reply_markup=None,
 ) -> None:
     """Envia mensagem com ParseMode.MARKDOWN e faz fallback para texto puro se houver erro de formatação."""
     try:
@@ -65,6 +78,7 @@ async def send_markdown_safe(
             text=text,
             parse_mode=ParseMode.MARKDOWN,
             disable_web_page_preview=disable_web_page_preview,
+            reply_markup=reply_markup,
         )
     except BadRequest as e:
         if "parse" in str(e).lower() or "entities" in str(e).lower():
@@ -73,6 +87,7 @@ async def send_markdown_safe(
                 chat_id=chat_id,
                 text=text,
                 disable_web_page_preview=disable_web_page_preview,
+                reply_markup=reply_markup,
             )
         else:
             raise
@@ -99,13 +114,20 @@ async def send_alert_to_user(bot: Bot, chat_id: int, match: AlertMatch, edicao: 
 
 
 async def broadcast_edition_summary(bot: Bot, edicao: Edicao) -> None:
-    """Envia o resumo da nova edição para todos os usuários ativos."""
+    """Envia o resumo da nova edição para todos os usuários ativos que optaram por receber resumos."""
     with get_db() as db:
-        usuarios = db.query(Usuario).filter(Usuario.ativo == True).all()
+        usuarios = db.query(Usuario).filter(
+            Usuario.ativo == True,
+            Usuario.receber_resumos == True,
+        ).all()
         chat_ids = [u.chat_id for u in usuarios]
+        admin_cadastrado = (
+            db.query(Usuario).filter(Usuario.chat_id == settings.TELEGRAM_ADMIN_CHAT_ID).first()
+            if settings.TELEGRAM_ADMIN_CHAT_ID else None
+        )
 
     # Se o admin estiver configurado mas não cadastrado ainda no banco, incluir
-    if settings.TELEGRAM_ADMIN_CHAT_ID and settings.TELEGRAM_ADMIN_CHAT_ID not in chat_ids:
+    if settings.TELEGRAM_ADMIN_CHAT_ID and not admin_cadastrado:
         chat_ids.append(settings.TELEGRAM_ADMIN_CHAT_ID)
 
     if not chat_ids:
@@ -125,12 +147,13 @@ async def broadcast_edition_summary(bot: Bot, edicao: Edicao) -> None:
                     text=chunk,
                     disable_web_page_preview=True,
                 )
-            # Mensagem final com link de download
+            # Mensagem final com link de download e botões
             await send_markdown_safe(
                 bot=bot,
                 chat_id=chat_id,
                 text=pdf_info,
                 disable_web_page_preview=False,
+                reply_markup=build_edition_keyboard(edicao.url_download),
             )
             logger.info(f"Resumo da edição nº {edicao.numero} entregue para chat_id={chat_id}")
 

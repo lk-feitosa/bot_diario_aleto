@@ -98,18 +98,28 @@ docker compose logs -f
 
 ## 📱 Comandos Disponíveis no Telegram
 
+### 👥 Para Todos os Usuários
 | Comando | Descrição |
 | :--- | :--- |
 | `/start` | Inicia o bot e cadastra o usuário para receber resumos |
 | `/ultimo` | Exibe o resumo e link de download da última edição publicada |
 | `/ultimo <nº>` | Exibe o resumo salvo de uma edição específica (ex.: `/ultimo 4380`) |
+| `/edicoes` | Lista as últimas 10 edições catalogadas no banco de dados |
+| `/buscar <termo>` | Pesquisa menções nos resumos e alertas salvos no banco |
 | `/monitorar <nome>` | Adiciona um novo nome ou termo para receber alerta nominal |
-| `/listar` | Lista todos os termos atualmente cadastrados para monitoramento |
+| `/listar` | Lista seus termos pessoais atualmente cadastrados para monitoramento |
 | `/remover <nome>` | Remove um nome da sua lista de monitoramento |
-| `/verificar` | Varre as últimas edições do portal e atualiza automaticamente no banco edições salvas com resumo simples (sem IA), sem reenviar broadcast para outros usuários |
-| `/verificar <nº>` | Força a regeneração com IA de uma edição específica (ex.: `/verificar 4380`) |
-| `/status` | Exibe o status da aplicação, total de edições e termos ativos |
+| `/notificacoes` | Alterna entre receber resumos diários + alertas ou apenas alertas nominais |
 | `/ajuda` | Mostra as instruções e lista de comandos |
+
+### 🔐 Exclusivos do Administrador (`TELEGRAM_ADMIN_CHAT_ID`)
+| Comando | Descrição |
+| :--- | :--- |
+| `/verificar` | Varre as últimas edições do portal e atualiza automaticamente edições sem resumo IA |
+| `/verificar <nº>` | Força a regeneração com IA de uma edição específica (ex.: `/verificar 4380`) |
+| `/status` | Exibe o status da aplicação, IA, total de edições, usuários e termos ativos |
+| `/usuarios` | Lista os usuários cadastrados, modo de notificação e resumo de interações |
+| `/comunicado <texto>` | Envia um comunicado oficial para todos os usuários ativos |
 
 ---
 

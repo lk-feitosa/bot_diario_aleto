@@ -1,23 +1,41 @@
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from src.config import settings
 from src.database.session import get_db
-from src.database.models import Usuario, TermoMonitorado, Edicao, InteracaoLog
-from src.bot.messages import format_welcome_message, split_long_message
+from src.database.models import Usuario, TermoMonitorado, Edicao, Alerta, InteracaoLog
+from src.bot.messages import format_welcome_message, split_long_message, build_edition_keyboard
 
 logger = logging.getLogger(__name__)
+
+
+def _is_admin(chat_id: int) -> bool:
+    """Retorna True se o chat_id pertence ao administrador configurado."""
+    return bool(settings.TELEGRAM_ADMIN_CHAT_ID and chat_id == settings.TELEGRAM_ADMIN_CHAT_ID)
+
+
+async def _require_admin(update: Update) -> bool:
+    """Verifica permissão de administrador e responde caso não autorizado."""
+    chat_id = update.effective_chat.id
+    if _is_admin(chat_id):
+        return True
+    await _reply_markdown_safe(
+        update,
+        "🔒 *Acesso restrito.*\nEste comando é exclusivo do administrador do bot.",
+    )
+    return False
 
 
 async def _reply_markdown_safe(
     target,
     text: str,
     disable_web_page_preview: bool = True,
+    reply_markup=None,
 ) -> None:
     """Responde com ParseMode.MARKDOWN e faz fallback para texto puro se houver erro de formatação.
     Aceita tanto `Update` quanto `Message`.
@@ -28,6 +46,7 @@ async def _reply_markdown_safe(
             text,
             parse_mode=ParseMode.MARKDOWN,
             disable_web_page_preview=disable_web_page_preview,
+            reply_markup=reply_markup,
         )
     except BadRequest as e:
         if "parse" in str(e).lower() or "entities" in str(e).lower():
@@ -35,6 +54,7 @@ async def _reply_markdown_safe(
             await message.reply_text(
                 text,
                 disable_web_page_preview=disable_web_page_preview,
+                reply_markup=reply_markup,
             )
         else:
             raise
@@ -99,7 +119,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     Edicao.resumo.isnot(None)
                 ).order_by(Edicao.id.desc()).first()
 
-    msg = format_welcome_message(user.first_name)
+    msg = format_welcome_message(user.first_name, is_admin=_is_admin(chat_id))
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
 
     if primeiro_acesso:
@@ -116,6 +136,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             update,
             f"📥 **Download do PDF Original:** [Diário nº {edicao_inicial.numero} ({edicao_inicial.data_publicacao})]({edicao_inicial.url_download})",
             disable_web_page_preview=False,
+            reply_markup=build_edition_keyboard(edicao_inicial.url_download),
         )
 
 
@@ -125,7 +146,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     with get_db() as db:
         _registrar_interacao(db, chat_id, "/ajuda")
 
-    msg = format_welcome_message(update.effective_user.first_name)
+    msg = format_welcome_message(update.effective_user.first_name, is_admin=_is_admin(chat_id))
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
 
 
@@ -166,6 +187,7 @@ async def ultimo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         update,
         f"📥 **Download do PDF Original:** [Diário nº {edicao.numero} ({edicao.data_publicacao})]({edicao.url_download})",
         disable_web_page_preview=False,
+        reply_markup=build_edition_keyboard(edicao.url_download),
     )
 
 
@@ -250,11 +272,13 @@ async def listar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 TermoMonitorado.ativo == True
             ).all()
 
-        # Termos globais (configurados via .env)
-        termos_globais = db.query(TermoMonitorado).filter(
-            TermoMonitorado.usuario_id.is_(None),
-            TermoMonitorado.ativo == True
-        ).all()
+        # Termos globais (visíveis apenas para o administrador)
+        termos_globais = []
+        if _is_admin(chat_id):
+            termos_globais = db.query(TermoMonitorado).filter(
+                TermoMonitorado.usuario_id.is_(None),
+                TermoMonitorado.ativo == True
+            ).all()
 
     linhas = ["📋 **SEUS NOMES E TERMOS MONITORADOS:**\n"]
     
@@ -311,7 +335,10 @@ async def remover_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Exibe estatísticas e status do bot."""
+    """Exibe estatísticas e status do bot (exclusivo do administrador)."""
+    if not await _require_admin(update):
+        return
+
     chat_id = update.effective_chat.id
 
     with get_db() as db:
@@ -320,7 +347,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         total_edicoes = db.query(Edicao).count()
         total_usuarios = db.query(Usuario).filter(Usuario.ativo == True).count()
         total_termos = db.query(TermoMonitorado).filter(TermoMonitorado.ativo == True).count()
-        ultima_edicao = db.query(Edicao).order_by(Edicao.id.desc()).first()
+        ultima_edicao = db.query(Edicao).order_by(Edicao.numero.desc(), Edicao.id.desc()).first()
 
     ultima_info = (
         f"Nº {ultima_edicao.numero} ({ultima_edicao.data_publicacao})"
@@ -346,6 +373,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def verificar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Dispara uma verificação manual forçada de novas edições ou de uma edição específica (`/verificar 4380`)."""
+    if not await _require_admin(update):
+        return
+
     from src.scheduler.job import run_daily_check_pipeline
 
     chat_id = update.effective_chat.id
@@ -390,10 +420,288 @@ async def verificar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                         update,
                         f"📥 *Download do PDF Original:* [Diário nº {edicao.numero} ({edicao.data_publicacao})]({edicao.url_download})",
                         disable_web_page_preview=False,
+                        reply_markup=build_edition_keyboard(edicao.url_download),
                     )
         else:
             await update.message.reply_text("✅ Verificação finalizada! Nenhuma nova edição encontrada no momento.")
     except Exception as e:
         logger.error(f"Erro na verificação manual: {e}", exc_info=True)
         await update.message.reply_text(f"❌ Ocorreu um erro durante a verificação: {e}")
+
+
+def _build_edicoes_text(db) -> str:
+    """Monta a listagem das últimas 10 edições catalogadas no banco."""
+    edicoes = db.query(Edicao).order_by(Edicao.numero.desc(), Edicao.id.desc()).limit(10).all()
+    if not edicoes:
+        return "ℹ️ Nenhuma edição foi catalogada ainda no banco de dados."
+
+    linhas = ["📚 *ÚLTIMAS EDIÇÕES CATALOGADAS NO BANCO:*\n"]
+    for ed in edicoes:
+        resumo = ed.resumo or ""
+        is_fallback = (
+            not resumo
+            or "ATOS E MATÉRIAS IDENTIFICADOS NA EDIÇÃO" in resumo
+            or "Resumo Automático Simplificado" in resumo
+        )
+        tag = "⚡ Resumo simples" if is_fallback else "🧠 Resumo IA"
+        linhas.append(f"• *Nº {ed.numero}* ({ed.data_publicacao}) — {tag} | [PDF]({ed.url_download})")
+
+    linhas.append("\n💡 *Para ler o resumo completo de uma edição, use:* `/ultimo <nº>`\nExemplo: `/ultimo 4380`")
+    return "\n".join(linhas)
+
+
+async def edicoes_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Lista as últimas 10 edições salvas no banco de dados."""
+    chat_id = update.effective_chat.id
+    with get_db() as db:
+        _registrar_interacao(db, chat_id, "/edicoes")
+        texto = _build_edicoes_text(db)
+
+    await _reply_markdown_safe(update, texto, disable_web_page_preview=True)
+
+
+async def buscar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Pesquisa um termo nos resumos e alertas salvos no banco de dados."""
+    chat_id = update.effective_chat.id
+    termo = " ".join(context.args).strip().strip("<>\"'[] ") if context.args else ""
+
+    if len(termo) < 2:
+        await _reply_markdown_safe(
+            update,
+            "⚠️ *Uso incorreto.* Informe pelo menos 2 caracteres para buscar.\n\n"
+            "Exemplo: `/buscar Concurso` ou `/buscar João da Silva`",
+        )
+        return
+
+    with get_db() as db:
+        _registrar_interacao(db, chat_id, "/buscar", termo)
+        like_pattern = f"%{termo}%"
+        edicoes = (
+            db.query(Edicao)
+            .filter(Edicao.resumo.ilike(like_pattern))
+            .order_by(Edicao.numero.desc(), Edicao.id.desc())
+            .limit(5)
+            .all()
+        )
+        alertas = (
+            db.query(Alerta)
+            .filter((Alerta.termo.ilike(like_pattern)) | (Alerta.trecho.ilike(like_pattern)))
+            .order_by(Alerta.id.desc())
+            .limit(5)
+            .all()
+        )
+
+    if not edicoes and not alertas:
+        await _reply_markdown_safe(
+            update,
+            f"🔍 Nenhum resultado encontrado para `{termo}` nos resumos e alertas salvos.",
+        )
+        return
+
+    linhas = [f"🔍 *RESULTADOS DA BUSCA POR:* `{termo}`\n"]
+    if edicoes:
+        linhas.append("📰 *Nos Resumos das Edições:*")
+        for ed in edicoes:
+            resumo = ed.resumo or ""
+            idx = resumo.lower().find(termo.lower())
+            trecho = ""
+            if idx != -1:
+                ini = max(0, idx - 60)
+                fim = min(len(resumo), idx + len(termo) + 90)
+                trecho = resumo[ini:fim].replace("\n", " ").strip()
+                if ini > 0:
+                    trecho = "..." + trecho
+                if fim < len(resumo):
+                    trecho = trecho + "..."
+            linhas.append(f"• *Edição nº {ed.numero}* ({ed.data_publicacao}) — [PDF]({ed.url_download})")
+            if trecho:
+                linhas.append(f"  _{trecho}_")
+
+    if alertas:
+        linhas.append("\n🚨 *Nos Alertas Registrados:*")
+        vistos = set()
+        for al in alertas:
+            chave = (al.edicao_id, al.pagina, al.termo)
+            if chave in vistos:
+                continue
+            vistos.add(chave)
+            ed_num = al.edicao.numero if al.edicao else str(al.edicao_id)
+            linhas.append(f"• *Edição nº {ed_num}* (Pág. {al.pagina}) — termo `{al.termo}`")
+
+    linhas.append("\n💡 Use `/ultimo <nº>` para abrir o resumo completo da edição.")
+    await _reply_markdown_safe(update, "\n".join(linhas), disable_web_page_preview=True)
+
+
+def _build_notificacoes_payload(receber_resumos: bool):
+    status_str = "📰 *Resumos Diários + Alertas*" if receber_resumos else "🚨 *Somente Alertas Nominais*"
+    texto = (
+        f"🔔 *PREFERÊNCIA DE NOTIFICAÇÕES*\n\n"
+        f"Modo atual: {status_str}\n\n"
+        f"• *Resumos Diários + Alertas:* você recebe o resumo completo de toda nova edição + alertas dos seus termos.\n"
+        f"• *Somente Alertas Nominais:* você não recebe o resumo diário automático, apenas quando algum termo seu aparecer."
+    )
+    teclado = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📰 Resumos + Alertas", callback_data="notif:all"),
+            InlineKeyboardButton("🚨 Somente Alertas", callback_data="notif:alerts"),
+        ]
+    ])
+    return texto, teclado
+
+
+async def notificacoes_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Permite escolher entre receber todos os resumos diários ou somente alertas nominais."""
+    chat_id = update.effective_chat.id
+    arg = context.args[0].lower().strip() if context.args else ""
+
+    with get_db() as db:
+        _registrar_interacao(db, chat_id, "/notificacoes", arg or None)
+        usuario = db.query(Usuario).filter(Usuario.chat_id == chat_id).first()
+        if not usuario:
+            usuario = Usuario(
+                chat_id=chat_id,
+                username=update.effective_user.username,
+                first_name=update.effective_user.first_name,
+                ativo=True,
+                receber_resumos=True,
+            )
+            db.add(usuario)
+            db.commit()
+            db.refresh(usuario)
+
+        if arg in ("tudo", "resumos", "all", "sim"):
+            usuario.receber_resumos = True
+            db.commit()
+        elif arg in ("alertas", "alerts", "nao", "não"):
+            usuario.receber_resumos = False
+            db.commit()
+
+        receber = bool(getattr(usuario, "receber_resumos", True))
+
+    texto, teclado = _build_notificacoes_payload(receber)
+    await _reply_markdown_safe(update, texto, reply_markup=teclado)
+
+
+async def usuarios_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Lista usuários cadastrados e resumo de interações (exclusivo do administrador)."""
+    if not await _require_admin(update):
+        return
+
+    chat_id = update.effective_chat.id
+    with get_db() as db:
+        _registrar_interacao(db, chat_id, "/usuarios")
+        usuarios = db.query(Usuario).order_by(Usuario.ultimo_acesso.desc().nullslast(), Usuario.id.desc()).limit(25).all()
+        total_ativos = db.query(Usuario).filter(Usuario.ativo == True).count()
+        total_inativos = db.query(Usuario).filter(Usuario.ativo == False).count()
+        total_resumos = db.query(Usuario).filter(Usuario.ativo == True, Usuario.receber_resumos == True).count()
+        total_interacoes = db.query(InteracaoLog).count()
+
+    linhas = [
+        f"👥 *USUÁRIOS DO BOT*\n",
+        f"• Ativos: *{total_ativos}* (recebem resumos: *{total_resumos}*)",
+        f"• Bloqueados/Inativos: *{total_inativos}*",
+        f"• Total de comandos registrados: *{total_interacoes}*\n",
+    ]
+    for u in usuarios:
+        nome = u.first_name or "Sem nome"
+        user_tag = f"@{u.username}" if u.username else f"`{u.chat_id}`"
+        status_icon = "🟢" if u.ativo else "🔴"
+        modo_icon = "📰" if getattr(u, "receber_resumos", True) else "🚨"
+        acesso = u.ultimo_acesso.strftime("%d/%m %H:%M") if u.ultimo_acesso else "nunca"
+        linhas.append(f"{status_icon}{modo_icon} *{nome}* ({user_tag}) — último acesso: {acesso}")
+
+    await _reply_markdown_safe(update, "\n".join(linhas), disable_web_page_preview=True)
+
+
+async def comunicado_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Envia um comunicado do administrador para todos os usuários ativos."""
+    if not await _require_admin(update):
+        return
+
+    from src.bot.bot import send_markdown_safe
+
+    chat_id = update.effective_chat.id
+    mensagem = " ".join(context.args).strip() if context.args else ""
+    if not mensagem:
+        await _reply_markdown_safe(
+            update,
+            "⚠️ Informe a mensagem do comunicado.\nExemplo: `/comunicado Bot atualizado com novos comandos!`",
+        )
+        return
+
+    with get_db() as db:
+        _registrar_interacao(db, chat_id, "/comunicado", mensagem[:100])
+        usuarios = db.query(Usuario).filter(Usuario.ativo == True).all()
+        chat_ids = [u.chat_id for u in usuarios]
+
+    texto_envio = f"📢 *COMUNICADO DO ADMINISTRADOR*\n\n{mensagem}"
+    enviados = 0
+    falhas = 0
+    for uid in chat_ids:
+        try:
+            await send_markdown_safe(context.bot, uid, texto_envio)
+            enviados += 1
+        except Exception as e:
+            logger.warning(f"Falha ao enviar comunicado para chat_id={uid}: {e}")
+            falhas += 1
+
+    await _reply_markdown_safe(
+        update,
+        f"✅ Comunicado enviado!\n• Entregues: *{enviados}*\n• Falhas/Bloqueios: *{falhas}*",
+    )
+
+
+async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Trata cliques nos botões inline das mensagens."""
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+
+    chat_id = query.message.chat_id
+    data = query.data or ""
+
+    if data == "cmd:edicoes":
+        with get_db() as db:
+            _registrar_interacao(db, chat_id, "btn:edicoes")
+            texto = _build_edicoes_text(db)
+        await _reply_markdown_safe(query.message, texto, disable_web_page_preview=True)
+        return
+
+    if data == "cmd:notificacoes":
+        with get_db() as db:
+            _registrar_interacao(db, chat_id, "btn:notificacoes")
+            usuario = db.query(Usuario).filter(Usuario.chat_id == chat_id).first()
+            receber = bool(getattr(usuario, "receber_resumos", True)) if usuario else True
+        texto, teclado = _build_notificacoes_payload(receber)
+        await _reply_markdown_safe(query.message, texto, reply_markup=teclado)
+        return
+
+    if data in ("notif:all", "notif:alerts"):
+        novo_valor = data == "notif:all"
+        with get_db() as db:
+            _registrar_interacao(db, chat_id, f"btn:{data}")
+            usuario = db.query(Usuario).filter(Usuario.chat_id == chat_id).first()
+            if not usuario:
+                usuario = Usuario(
+                    chat_id=chat_id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                    ativo=True,
+                    receber_resumos=novo_valor,
+                )
+                db.add(usuario)
+            else:
+                usuario.receber_resumos = novo_valor
+            db.commit()
+
+        texto, teclado = _build_notificacoes_payload(novo_valor)
+        try:
+            await query.edit_message_text(
+                texto,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=teclado,
+            )
+        except BadRequest:
+            await _reply_markdown_safe(query.message, texto, reply_markup=teclado)
 
