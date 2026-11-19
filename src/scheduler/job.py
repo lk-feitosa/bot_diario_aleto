@@ -17,18 +17,29 @@ from src.bot.bot import send_alert_to_user, broadcast_edition_summary
 logger = logging.getLogger(__name__)
 
 
+def _is_fallback_summary(resumo: Optional[str]) -> bool:
+    """Identifica se o resumo salvo está vazio ou foi gerado pelo modo fallback (sem IA)."""
+    if not resumo:
+        return True
+    return (
+        "ATOS E MATÉRIAS IDENTIFICADOS NA EDIÇÃO" in resumo
+        or "Resumo Automático Simplificado" in resumo
+    )
+
+
 async def run_daily_check_pipeline(
     app: Optional[Application] = None,
     force_current: bool = False,
+    target_numero: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Executa o ciclo completo de monitoramento:
     1. Varre o portal da ALETO em busca de novos diários.
-    2. Baixa o PDF das novas edições.
+    2. Baixa o PDF das novas edições (ou edições com resumo simples sem IA).
     3. Extrai o texto e processa alertas de termos nominais.
     4. Gera o resumo inteligente via IA.
-    5. Dispara notificações no Telegram.
-    6. Registra tudo no banco SQLite.
+    5. Dispara notificações no Telegram (apenas para a edição atual, sem spam de diários antigos).
+    6. Registra/atualiza tudo no banco de dados.
     """
     logger.info("🔍 [SCHEDULER] Iniciando rotina de checagem do Diário Oficial ALETO...")
     scraper = AletoScraper()
@@ -36,36 +47,73 @@ async def run_daily_check_pipeline(
     novas_edicoes_count = 0
     total_alertas_count = 0
     broadcasted = False
+    edicoes_processadas: List[str] = []
 
     try:
         itens = await scraper.fetch_latest_edicoes(limit=5)
     except Exception as e:
         logger.error(f"Erro ao consultar portal da ALETO: {e}", exc_info=True)
-        return {"sucesso": False, "erro": str(e), "novas_edicoes": 0}
+        return {"sucesso": False, "erro": str(e), "novas_edicoes": 0, "edicoes_processadas": []}
+
+    if target_numero:
+        itens = [item for item in itens if item.numero == target_numero]
+        if not itens:
+            return {
+                "sucesso": True,
+                "novas_edicoes": 0,
+                "alertas_emitidos": 0,
+                "broadcasted": False,
+                "edicoes_processadas": [],
+            }
 
     data_hoje = datetime.now(ZoneInfo(settings.TIMEZONE)).strftime("%d/%m/%Y")
     itens_do_dia = [item for item in itens if item.data == data_hoje]
-    itens = itens_do_dia or itens[:5]
+    if not force_current and not target_numero:
+        itens = itens_do_dia or itens[:5]
+    newest_url = itens[0].url_download if itens else None
     if not itens:
         logger.info("Nenhuma edição encontrada no portal para processar.")
-        return {"sucesso": True, "novas_edicoes": 0, "alertas_emitidos": 0}
+        return {"sucesso": True, "novas_edicoes": 0, "alertas_emitidos": 0, "edicoes_processadas": []}
     if not itens_do_dia:
         logger.info(
             f"Nenhuma edição publicada hoje ({data_hoje}); verificando as edições mais recentes disponíveis."
         )
 
+    # Em /verificar sem número específico, prioriza atualizar edições recentes sem IA ou ausentes no banco
+    algum_pendente_ou_fallback = False
+    if force_current and not target_numero:
+        with get_db() as db:
+            for it in itens:
+                ex = (
+                    db.query(Edicao)
+                    .filter((Edicao.url_download == it.url_download) | (Edicao.numero == it.numero))
+                    .first()
+                )
+                if ex is None or _is_fallback_summary(ex.resumo):
+                    algum_pendente_ou_fallback = True
+                    break
+
     for item in reversed(itens):  # Processa em ordem cronológica (mais antigo para o mais novo)
         with get_db() as db:
-            total_banco = db.query(Edicao).count()
-            existente = db.query(Edicao).filter(Edicao.url_download == item.url_download).first()
-            if existente and not force_current:
-                logger.info(f"⏭️ Edição já processada (cache local/banco encontrado): {item.url_download}")
+            existente = (
+                db.query(Edicao)
+                .filter((Edicao.url_download == item.url_download) | (Edicao.numero == item.numero))
+                .first()
+            )
+            precisa_upgrade_ia = force_current and existente is not None and _is_fallback_summary(existente.resumo)
+            forcar_este_item = bool(target_numero) or (
+                force_current and not algum_pendente_ou_fallback and item.url_download == newest_url
+            )
+
+            if existente and not precisa_upgrade_ia and not forcar_este_item:
+                logger.info(f"⏭️ Edição nº {item.numero} já possui resumo IA completo: {item.url_download}")
                 continue
 
             if existente:
-                logger.info(f"🔁 Regenerando resumo da edição nº {item.numero} por solicitação manual.")
-
-            logger.info(f"✨ Nova edição detectada! Diário nº {item.numero} ({item.data}) - {item.url_download}")
+                motivo = "atualização de resumo simples para IA" if precisa_upgrade_ia else "solicitação manual"
+                logger.info(f"🔁 Regenerando resumo da edição nº {item.numero} ({motivo}).")
+            else:
+                logger.info(f"✨ Nova edição detectada! Diário nº {item.numero} ({item.data}) - {item.url_download}")
 
             # 1. Download do PDF
             nome_arquivo = f"diario_{item.numero}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.pdf"
@@ -171,9 +219,15 @@ async def run_daily_check_pipeline(
 
             db.commit()
             novas_edicoes_count += 1
+            edicoes_processadas.append(nova_edicao.numero)
 
-            # 7. Broadcast do Resumo Geral para Todos os Usuários (apenas para edições novas)
-            if not existente and app and app.bot:
+            # 7. Broadcast do Resumo Geral para Todos os Usuários (apenas para edição nova do dia/mais recente)
+            deve_fazer_broadcast = (
+                not existente
+                and not force_current
+                and (item.data == data_hoje or item.url_download == newest_url)
+            )
+            if deve_fazer_broadcast and app and app.bot:
                 await broadcast_edition_summary(app.bot, nova_edicao)
                 broadcasted = True
 
@@ -186,4 +240,5 @@ async def run_daily_check_pipeline(
         "novas_edicoes": novas_edicoes_count,
         "alertas_emitidos": total_alertas_count,
         "broadcasted": broadcasted,
+        "edicoes_processadas": edicoes_processadas,
     }

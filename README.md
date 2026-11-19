@@ -102,10 +102,12 @@ docker compose logs -f
 | :--- | :--- |
 | `/start` | Inicia o bot e cadastra o usuário para receber resumos |
 | `/ultimo` | Exibe o resumo e link de download da última edição publicada |
+| `/ultimo <nº>` | Exibe o resumo salvo de uma edição específica (ex.: `/ultimo 4380`) |
 | `/monitorar <nome>` | Adiciona um novo nome ou termo para receber alerta nominal |
 | `/listar` | Lista todos os termos atualmente cadastrados para monitoramento |
 | `/remover <nome>` | Remove um nome da sua lista de monitoramento |
-| `/verificar` | Força uma varredura imediata no portal da ALETO |
+| `/verificar` | Varre as últimas edições do portal e atualiza automaticamente no banco edições salvas com resumo simples (sem IA), sem reenviar broadcast para outros usuários |
+| `/verificar <nº>` | Força a regeneração com IA de uma edição específica (ex.: `/verificar 4380`) |
 | `/status` | Exibe o status da aplicação, total de edições e termos ativos |
 | `/ajuda` | Mostra as instruções e lista de comandos |
 

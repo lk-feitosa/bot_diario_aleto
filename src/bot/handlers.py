@@ -15,13 +15,16 @@ logger = logging.getLogger(__name__)
 
 
 async def _reply_markdown_safe(
-    update: Update,
+    target,
     text: str,
     disable_web_page_preview: bool = True,
 ) -> None:
-    """Responde com ParseMode.MARKDOWN e faz fallback para texto puro se houver erro de formatação."""
+    """Responde com ParseMode.MARKDOWN e faz fallback para texto puro se houver erro de formatação.
+    Aceita tanto `Update` quanto `Message`.
+    """
+    message = getattr(target, "message", None) or target
     try:
-        await update.message.reply_text(
+        await message.reply_text(
             text,
             parse_mode=ParseMode.MARKDOWN,
             disable_web_page_preview=disable_web_page_preview,
@@ -29,7 +32,7 @@ async def _reply_markdown_safe(
     except BadRequest as e:
         if "parse" in str(e).lower() or "entities" in str(e).lower():
             logger.warning(f"Falha ao interpretar Markdown na resposta; enviando texto puro: {e}")
-            await update.message.reply_text(
+            await message.reply_text(
                 text,
                 disable_web_page_preview=disable_web_page_preview,
             )
@@ -127,25 +130,36 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def ultimo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Retorna o resumo da última edição do diário processada."""
+    """Retorna o resumo da última edição processada ou de uma edição específica (`/ultimo 4380`)."""
     chat_id = update.effective_chat.id
+    numero_alvo = context.args[0].strip("#nº° ") if context.args else None
 
     with get_db() as db:
-        _registrar_interacao(db, chat_id, "/ultimo")
-        edicao = db.query(Edicao).order_by(Edicao.id.desc()).first()
+        _registrar_interacao(db, chat_id, "/ultimo", numero_alvo)
+        if numero_alvo:
+            edicao = db.query(Edicao).filter(Edicao.numero == numero_alvo).order_by(Edicao.id.desc()).first()
+        else:
+            edicao = db.query(Edicao).order_by(Edicao.numero.desc(), Edicao.id.desc()).first()
 
     if not edicao:
-        await update.message.reply_text(
-            "ℹ️ Nenhuma edição foi processada ainda no banco de dados.\n"
-            "Use o comando `/verificar` para realizar a primeira busca agora mesmo!",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        if numero_alvo:
+            await _reply_markdown_safe(
+                update,
+                f"ℹ️ A edição nº `{numero_alvo}` ainda não está salva no banco.\n"
+                f"Use `/verificar {numero_alvo}` para baixar e gerar o resumo por IA dessa edição.",
+            )
+        else:
+            await _reply_markdown_safe(
+                update,
+                "ℹ️ Nenhuma edição foi processada ainda no banco de dados.\n"
+                "Use o comando `/verificar` para realizar a primeira busca agora mesmo!",
+            )
         return
 
     resumo_texto = edicao.resumo or "Resumo não disponível para esta edição."
     chunks = split_long_message(resumo_texto)
 
-    for i, chunk in enumerate(chunks):
+    for chunk in chunks:
         await _reply_markdown_safe(update, chunk, disable_web_page_preview=True)
 
     await _reply_markdown_safe(
@@ -327,39 +341,55 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"🤖 *OpenAI (fallback):* {openai_status}\n"
         f"🕒 *Hora do Servidor:* {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
     )
-    await _reply_markdown_safe(update.message, msg)
+    await _reply_markdown_safe(update, msg)
 
 
 async def verificar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Dispara uma verificação manual forçada de novas edições."""
+    """Dispara uma verificação manual forçada de novas edições ou de uma edição específica (`/verificar 4380`)."""
     from src.scheduler.job import run_daily_check_pipeline
 
     chat_id = update.effective_chat.id
+    numero_alvo = context.args[0].strip("#nº° ") if context.args else None
     with get_db() as db:
-        _registrar_interacao(db, chat_id, "/verificar")
+        _registrar_interacao(db, chat_id, "/verificar", numero_alvo)
 
-    await _reply_markdown_safe(
-        update.message,
-        "🔄 *Iniciando verificação manual no portal da ALETO...*\nAguarde alguns instantes.",
+    aviso = (
+        f"🔄 *Gerando/atualizando resumo por IA da edição nº {numero_alvo}...*\nAguarde alguns instantes."
+        if numero_alvo
+        else "🔄 *Iniciando verificação manual no portal da ALETO...*\n"
+             "Edições recentes sem resumo IA serão atualizadas automaticamente no banco."
     )
+    await _reply_markdown_safe(update, aviso)
     try:
-        resultado = await run_daily_check_pipeline(context.application, force_current=True)
+        resultado = await run_daily_check_pipeline(
+            context.application, force_current=True, target_numero=numero_alvo
+        )
+        numeros_proc = resultado.get("edicoes_processadas", [])
         if resultado.get("novas_edicoes", 0) > 0:
+            lista_str = ", ".join(f"nº {n}" for n in numeros_proc) if numeros_proc else str(resultado["novas_edicoes"])
             await update.message.reply_text(
-                f"✅ Verificação finalizada! {resultado['novas_edicoes']} edição(ões) processada(s)."
+                f"✅ Verificação finalizada! Edição(ões) processada(s)/atualizada(s): {lista_str}."
             )
             if not resultado.get("broadcasted", False):
                 with get_db() as db:
-                    edicao = db.query(Edicao).order_by(Edicao.id.desc()).first()
-                if edicao:
+                    if numeros_proc:
+                        edicoes = (
+                            db.query(Edicao)
+                            .filter(Edicao.numero.in_(numeros_proc))
+                            .order_by(Edicao.numero.asc())
+                            .all()
+                        )
+                    else:
+                        ed = db.query(Edicao).order_by(Edicao.numero.desc(), Edicao.id.desc()).first()
+                        edicoes = [ed] if ed else []
+                for edicao in edicoes:
                     resumo_texto = edicao.resumo or "Resumo não disponível para esta edição."
                     for chunk in split_long_message(resumo_texto):
-                        await _reply_markdown_safe(
-                            update.message, chunk, disable_web_page_preview=True
-                        )
+                        await _reply_markdown_safe(update, chunk, disable_web_page_preview=True)
                     await _reply_markdown_safe(
-                        update.message,
+                        update,
                         f"📥 *Download do PDF Original:* [Diário nº {edicao.numero} ({edicao.data_publicacao})]({edicao.url_download})",
+                        disable_web_page_preview=False,
                     )
         else:
             await update.message.reply_text("✅ Verificação finalizada! Nenhuma nova edição encontrada no momento.")
