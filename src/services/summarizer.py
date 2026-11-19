@@ -95,24 +95,40 @@ class DiarioSummarizer:
         )
 
         if self._client and self.api_key:
-            try:
-                if self._use_new_sdk:
-                    response = await asyncio.to_thread(
-                        self._client.models.generate_content,
-                        model=self.model_name,
-                        contents=prompt,
-                    )
-                    resumo = response.text
-                else:
-                    response = await asyncio.to_thread(self._client.generate_content, prompt)
-                    resumo = response.text
+            candidate_models = []
+            for m in (
+                self.model_name,
+                "gemini-3.1-flash-lite",
+                "gemini-2.5-flash-lite",
+                "gemini-2.5-flash",
+            ):
+                if m and m not in candidate_models:
+                    candidate_models.append(m)
 
-                if resumo and len(resumo.strip()) > 50:
-                    logger.info("Resumo gerado com sucesso pelo Gemini!")
-                    return resumo.strip()
-                logger.warning("Gemini retornou uma resposta vazia ou muito curta.")
-            except Exception as e:
-                logger.error(f"Falha no Gemini; tentando OpenAI: {e}", exc_info=True)
+            for model_id in candidate_models:
+                try:
+                    if self._use_new_sdk:
+                        response = await asyncio.to_thread(
+                            self._client.models.generate_content,
+                            model=model_id,
+                            contents=prompt,
+                        )
+                    else:
+                        import google.generativeai as legacy_genai
+                        client = (
+                            self._client
+                            if model_id == self.model_name
+                            else legacy_genai.GenerativeModel(model_id)
+                        )
+                        response = await asyncio.to_thread(client.generate_content, prompt)
+
+                    resumo = response.text
+                    if resumo and len(resumo.strip()) > 50:
+                        logger.info(f"Resumo gerado com sucesso pelo Gemini ({model_id})!")
+                        return resumo.strip()
+                    logger.warning(f"Gemini ({model_id}) retornou uma resposta vazia ou muito curta.")
+                except Exception as e:
+                    logger.error(f"Falha no Gemini ({model_id}): {e}", exc_info=True)
         else:
             logger.warning("Gemini indisponível: chave ausente ou cliente não inicializado.")
 
