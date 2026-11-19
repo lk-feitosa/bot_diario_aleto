@@ -396,10 +396,21 @@ async def verificar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         numeros_proc = resultado.get("edicoes_processadas", [])
         if resultado.get("novas_edicoes", 0) > 0:
-            lista_str = ", ".join(f"nº {n}" for n in numeros_proc) if numeros_proc else str(resultado["novas_edicoes"])
-            await update.message.reply_text(
-                f"✅ Verificação finalizada! Edição(ões) processada(s)/atualizada(s): {lista_str}."
-            )
+            ai_modelos = resultado.get("ai_modelos") or {}
+            ai_erros = resultado.get("ai_erros") or {}
+            partes_status = []
+            for n in numeros_proc:
+                modelo = ai_modelos.get(n, "desconhecido")
+                tag = "⚠️ Fallback simples" if modelo == "fallback" else f"🧠 {modelo}"
+                partes_status.append(f"nº {n} ({tag})")
+            lista_str = ", ".join(partes_status) if partes_status else str(resultado["novas_edicoes"])
+            msg_res = f"✅ Verificação finalizada! Edição(ões) processada(s)/atualizada(s): {lista_str}."
+            if ai_erros:
+                detalhes = []
+                for n, errs in ai_erros.items():
+                    detalhes.append(f"• Edição nº {n}:\n  - " + "\n  - ".join(errs[:3]))
+                msg_res += "\n\n⚠️ Motivos da falha na IA:\n" + "\n".join(detalhes)
+            await update.message.reply_text(msg_res)
             if not resultado.get("broadcasted", False):
                 with get_db() as db:
                     if numeros_proc:

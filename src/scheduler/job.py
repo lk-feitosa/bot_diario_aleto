@@ -48,6 +48,8 @@ async def run_daily_check_pipeline(
     total_alertas_count = 0
     broadcasted = False
     edicoes_processadas: List[str] = []
+    ai_modelos: Dict[str, str] = {}
+    ai_erros: Dict[str, List[str]] = {}
 
     try:
         itens = await scraper.fetch_latest_edicoes(limit=5)
@@ -158,6 +160,9 @@ async def run_daily_check_pipeline(
                 numero_edicao=item.numero,
                 data_edicao=item.data
             )
+            ai_modelos[item.numero] = summarizer.last_model_used or "desconhecido"
+            if _is_fallback_summary(resumo_ia) and summarizer.last_errors:
+                ai_erros[item.numero] = list(summarizer.last_errors)
 
             # 5. Salva a Edição no Banco
             if existente:
@@ -241,4 +246,6 @@ async def run_daily_check_pipeline(
         "alertas_emitidos": total_alertas_count,
         "broadcasted": broadcasted,
         "edicoes_processadas": edicoes_processadas,
+        "ai_modelos": ai_modelos,
+        "ai_erros": ai_erros,
     }

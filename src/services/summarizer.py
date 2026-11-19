@@ -61,6 +61,8 @@ class DiarioSummarizer:
         self.openai_api_key = settings.OPENAI_API_KEY
         self.openai_model = settings.OPENAI_MODEL
         self._client = None
+        self.last_model_used: Optional[str] = None
+        self.last_errors: list[str] = []
         self._init_client()
 
     def _init_client(self) -> None:
@@ -90,6 +92,9 @@ class DiarioSummarizer:
         """
         Gera um resumo completo do diário oficial utilizando o Gemini ou fallback heurístico.
         """
+        self.last_model_used = None
+        self.last_errors = []
+
         prompt = PROMPT_SUMARIO_DIARIO.format(
             texto_diario=doc_data.texto_completo[:300000]  # Limite de segurança de 300k caracteres
         )
@@ -98,9 +103,11 @@ class DiarioSummarizer:
             candidate_models = []
             for m in (
                 self.model_name,
-                "gemini-3.1-flash-lite",
-                "gemini-2.5-flash-lite",
                 "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-2.0-flash",
+                "gemini-2.0-flash-lite",
+                "gemini-3.1-flash-lite",
             ):
                 if m and m not in candidate_models:
                     candidate_models.append(m)
@@ -125,25 +132,33 @@ class DiarioSummarizer:
                     resumo = response.text
                     if resumo and len(resumo.strip()) > 50:
                         logger.info(f"Resumo gerado com sucesso pelo Gemini ({model_id})!")
+                        self.last_model_used = model_id
                         return resumo.strip()
                     logger.warning(f"Gemini ({model_id}) retornou uma resposta vazia ou muito curta.")
+                    self.last_errors.append(f"{model_id}: resposta vazia/curta")
                 except Exception as e:
                     logger.error(f"Falha no Gemini ({model_id}): {e}", exc_info=True)
+                    self.last_errors.append(f"{model_id}: {str(e).splitlines()[0][:120]}")
         else:
             logger.warning("Gemini indisponível: chave ausente ou cliente não inicializado.")
+            self.last_errors.append("Gemini: chave ausente ou cliente não inicializado")
 
         if self.openai_api_key:
             try:
                 resumo = await self._generate_openai_summary(prompt)
                 if resumo and len(resumo.strip()) > 50:
                     logger.info("Resumo gerado com sucesso pela OpenAI.")
+                    self.last_model_used = f"openai/{self.openai_model}"
                     return resumo.strip()
                 logger.warning("OpenAI retornou uma resposta vazia ou muito curta.")
+                self.last_errors.append(f"openai/{self.openai_model}: resposta vazia/curta")
             except Exception as e:
                 logger.error(f"Falha na OpenAI; utilizando fallback heurístico: {e}", exc_info=True)
+                self.last_errors.append(f"openai/{self.openai_model}: {str(e).splitlines()[0][:120]}")
         else:
             logger.warning("OPENAI_API_KEY não configurada; utilizando fallback heurístico.")
 
+        self.last_model_used = "fallback"
         return self._generate_fallback_summary(doc_data, numero_edicao, data_edicao)
 
     async def _generate_openai_summary(self, prompt: str) -> str:
